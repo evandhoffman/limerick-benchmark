@@ -1,4 +1,5 @@
 .venv/
+~/.limerick-benchmark/
 __pycache__/
 *.pyc
 *.pyo

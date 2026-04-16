@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 RESULTS_ROOT = Path(__file__).parent.parent / "results"
 TASKS_DIR = Path(__file__).parent.parent / "tasks"
 
+# Workspaces live OUTSIDE the repo so `uv init` inside them can't walk up
+# and auto-register as a workspace member in our root pyproject.toml.
+WORKSPACE_BASE = Path.home() / ".limerick-benchmark" / "workspaces"
+
 
 def _slug(model_id: str) -> str:
     """Convert a model ID to a filesystem-safe slug."""
@@ -42,8 +46,15 @@ async def _run_one(model: dict[str, Any], task_prompt: str, timeout: int) -> dic
     provider: str = model.get("provider", "ollama")
 
     run_dir = _run_dir(model_id)
-    workspace = run_dir / "workspace"
+    run_dir.mkdir(parents=True)
+
+    # Workspace is outside the repo to prevent uv from treating our
+    # pyproject.toml as a parent workspace when the model runs `uv init`.
+    workspace = WORKSPACE_BASE / run_dir.name
     workspace.mkdir(parents=True)
+
+    # Symlink for convenience so results dir is self-contained for browsing
+    (run_dir / "workspace").symlink_to(workspace)
 
     logger.info("=" * 60)
     logger.info("Model   : %s", model_id)

@@ -12,13 +12,14 @@ Usage:
 import argparse
 import logging
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 from rich.console import Console
 from rich.table import Table
+
+from benchmark.ollama_utils import get_pulled_names
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -62,31 +63,6 @@ def models_for_set(catalog: dict[str, dict], model_set: str) -> list[dict]:
     return [e for e in catalog.values() if is_local_ollama(e) and e.get(key)]
 
 
-def get_pulled_models() -> set[str]:
-    """Return set of model IDs already present in local Ollama."""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=15,
-        )
-    except FileNotFoundError:
-        console.print("[red]Error: 'ollama' not found. Install Ollama from https://ollama.ai[/red]")
-        sys.exit(1)
-    except subprocess.TimeoutExpired:
-        console.print("[yellow]Warning: 'ollama list' timed out — is ollama running? (try: ollama serve)[/yellow]")
-        return set()
-
-    if result.returncode != 0:
-        msg = result.stderr.strip() or "unknown error"
-        console.print(f"[yellow]Warning: 'ollama list' failed ({msg}) — assuming nothing is pulled[/yellow]")
-        return set()
-
-    pulled: set[str] = set()
-    for line in result.stdout.splitlines()[1:]:  # first line is header
-        parts = line.split()
-        if parts:
-            pulled.add(parts[0])
-    return pulled
 
 
 def free_space_gb() -> float:
@@ -164,7 +140,7 @@ def main() -> None:
             else:
                 targets.append(entry)
 
-    pulled = get_pulled_models()
+    pulled = get_pulled_names()
     have = [t for t in targets if t["id"] in pulled]
     need = [t for t in targets if t["id"] not in pulled]
 

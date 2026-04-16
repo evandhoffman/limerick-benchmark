@@ -611,3 +611,31 @@ qwen3.5:
     size_gb: 8.9
     context_k: 256
     exclude: "NVIDIA FP4 format."
+
+# ---------------------------------------------------------------------------
+# Other locally-available models (found in Ollama store)
+# ---------------------------------------------------------------------------
+other:
+  - id: "qwen3-coder:30b"
+    provider: ollama
+    size_gb: 18.0
+    context_k: 32
+    notes: "Qwen3 Coder 30B — coding-specialized model, strong candidate for benchmark."
+
+  - id: "hf.co/Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-GGUF:Q8_0"
+    provider: ollama
+    size_gb: 29.0
+    context_k: 256
+    notes: "Qwen3.5 27B distilled from Claude Opus 4.6 reasoning traces. Wildcard — may punch above its weight."
+
+  - id: "deepseek-r1:8b"
+    provider: ollama
+    size_gb: 5.2
+    context_k: 64
+    notes: "DeepSeek R1 8B — reasoning model. May overthink simple tasks."
+
+  - id: "gemma3:1b"
+    provider: ollama
+    size_gb: 0.8
+    context_k: 32
+    notes: "Gemma 3 1B — too small to produce working code; floor reference only."
