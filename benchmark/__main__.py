@@ -27,6 +27,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
+# LiteLLM is very chatty at INFO level
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 console = Console()
 

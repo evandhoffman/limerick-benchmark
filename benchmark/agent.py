@@ -113,6 +113,8 @@ async def run_agent(
         "timed_out": False,
         "error": None,
     }
+    nudge_count = 0
+    MAX_NUDGES = 2
 
     def append_trace(entry: dict) -> None:
         entry["ts"] = _ts()
@@ -173,8 +175,9 @@ async def run_agent(
                 # Model returned without using tools. If the workspace is still
                 # empty this is a non-starter — push it once, then give up.
                 workspace_has_files = any(workspace.rglob("*"))
-                if not workspace_has_files and token_state["tool_calls"] == 0:
-                    logger.warning("Model returned without using tools and workspace is empty — nudging")
+                if not workspace_has_files and token_state["tool_calls"] == 0 and nudge_count < MAX_NUDGES:
+                    nudge_count += 1
+                    logger.warning("Model returned without using tools — nudging (%d/%d)", nudge_count, MAX_NUDGES)
                     messages.append({
                         "role": "user",
                         "content": (
