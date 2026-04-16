@@ -30,6 +30,48 @@ The first two checks are automated pass/fail gates — if the server doesn't sta
 
 **Reference**: Claude Opus 4.7 = 100 points. All other scores are relative.
 
+## Prerequisites
+
+- macOS with Apple Silicon (developed on M5 Max, 64 GB)
+- [Ollama](https://ollama.ai) installed and running (`ollama serve`)
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
+- `ANTHROPIC_API_KEY` set (for reference model runs)
+- `sudo` access — needed for `powermetrics` GPU/thermal sampling
+
+## Quick start
+
+```bash
+# Install dependencies
+uv sync
+
+# See what models are locally available and how they map to the catalog
+uv run benchmark list
+
+# Prefetch models you don't have yet
+uv run prefetch --set poc
+uv run prefetch --set recommended --dry-run   # preview first
+
+# Run the POC (2 smallest models — good for validating the harness)
+uv run benchmark run --set poc
+
+# Run only models already in your local Ollama store
+uv run benchmark run --set local
+
+# Run the full recommended set (top 10 local + 3 Anthropic reference)
+uv run benchmark run --set recommended
+
+# Run a single model
+uv run benchmark run --model gemma4:e2b
+
+# Run Anthropic reference models only
+uv run benchmark run --set reference
+
+# Skip models that aren't pulled instead of aborting
+uv run benchmark run --set recommended --skip-missing
+```
+
+After each run, open the result directory and run `./run.sh` to start the generated server, then browse to http://localhost:8181 to evaluate manually.
+
 ## Model sets
 
 ### Reference models (Anthropic cloud)
@@ -40,9 +82,9 @@ The first two checks are automated pass/fail gates — if the server doesn't sta
 | `claude-sonnet-4-6` | Claude Sonnet 4.6 | Reference — better |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Reference — good |
 
-### POC models (start here)
+### POC models
 
-For initial testing of the harness before running the full suite, use these two — they're the smallest in the recommended set and will complete quickly:
+For initial testing of the harness, use these two — smallest in the recommended set, complete quickly:
 
 | Model ID | Size | Why |
 |---|---|---|
@@ -58,8 +100,8 @@ Chosen to answer specific questions: does size help? does a coding fine-tune bea
 | 1 | `qwen3.5:9b` | 6.6 GB | Qwen 3.5 | Small/fast Qwen baseline |
 | 2 | `gemma4:e2b` | 7.2 GB | Gemma 4 | Small/fast Gemma baseline |
 | 3 | `gemma4:e4b` | 9.6 GB | Gemma 4 | One size up from e2b |
-| 4 | `gemma4:e2b-mlx-bf16` | 10 GB | Gemma 4 MLX | Same model as #2, Apple MLX runtime |
-| 5 | `qwen3.5:27b-coding-mxfp8` | 31 GB | Qwen 3.5 Coder | Does coding fine-tune beat bigger general model? |
+| 4 | `gemma4:e2b-mlx-bf16` | 10 GB | Gemma 4 MLX | Same model as #2, Apple MLX runtime — runtime comparison |
+| 5 | `qwen3.5:27b-coding-mxfp8` | 31 GB | Qwen 3.5 Coder | Does coding fine-tune beat a bigger general model? |
 | 6 | `qwen3.5:35b-a3b` | 24 GB | Qwen 3.5 | Gen 3.5 large MoE baseline |
 | 7 | `gemma4:26b` | 18 GB | Gemma 4 | Large Gemma — quality jump from small? |
 | 8 | `qwen3.5:35b-a3b-coding-mxfp8` | 38 GB | Qwen 3.5 Coder | Coding fine-tune at 35B scale |
@@ -73,44 +115,15 @@ Full catalog with all variants and exclusion notes: [`models.yaml`](models.yaml)
 ```
 results/
 └── 20260416_143022_gemma4_e2b/
-    ├── workspace/        ← generated code (everything the model created)
+    ├── workspace -> ~/.limerick-benchmark/workspaces/20260416_143022_gemma4_e2b/
+    │                 (symlink — generated code lives here, outside the repo)
     ├── run.sh            ← run this to start the server for manual eval
     ├── trace.jsonl       ← full agent message history (prompts, tool calls, outputs)
-    └── metrics.csv       ← timestamped system metrics
+    ├── metrics.csv       ← timestamped system metrics
+    └── summary.json      ← run stats (tokens, timing, eval result)
 ```
 
-## Prerequisites
-
-- macOS with Apple Silicon (developed on M5 Max, 64 GB)
-- [Ollama](https://ollama.ai) installed and running (`ollama serve`)
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- `ANTHROPIC_API_KEY` set (for reference model runs)
-- `sudo` access — needed for `powermetrics` GPU/thermal sampling
-
-## Quick start
-
-```bash
-# Install dependencies
-uv sync
-
-# Pull POC models (if not already downloaded)
-ollama pull qwen3.5:9b
-ollama pull gemma4:e2b
-
-# Run POC (2 smallest models)
-uv run python -m benchmark run --set poc
-
-# Run full recommended set (top 10 local + 3 Anthropic)
-uv run python -m benchmark run --set recommended
-
-# Run a single model
-uv run python -m benchmark run --model gemma4:e2b
-
-# Run all reference models only
-uv run python -m benchmark run --set reference
-```
-
-After each run, open the result directory and run `./run.sh` to start the server, then browse to http://localhost:8181.
+Workspaces are kept outside the repo tree so that `uv init` inside them cannot auto-register as a parent workspace member in this project's `pyproject.toml`.
 
 ## metrics.csv columns
 
@@ -128,6 +141,11 @@ After each run, open the result directory and run `./run.sh` to start the server
 | `tokens_out` | LiteLLM | cumulative completion tokens |
 | `api_calls` | benchmark | cumulative model API calls |
 | `tool_calls` | benchmark | cumulative bash tool invocations |
+
+`powermetrics` requires `sudo`. The benchmark will prompt on first run. To avoid repeated prompts, add to `/etc/sudoers` (via `visudo`):
+```
+yourusername ALL=(ALL) NOPASSWD: /usr/bin/powermetrics
+```
 
 ## Hardware
 
