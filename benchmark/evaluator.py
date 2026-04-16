@@ -1,8 +1,8 @@
 """Post-run evaluation: start the generated server, check HTTP 200, write run.sh."""
 
 import asyncio
+import contextlib
 import logging
-import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -107,11 +107,13 @@ async def evaluate(workspace: Path, results_dir: Path) -> dict[str, Any]:
                 result["error"] = f"http_error: {exc}"
                 logger.warning("HTTP check failed: %s", exc)
     finally:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            proc.kill()
+        if proc.returncode is None:  # still running
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
 
     return result
 
