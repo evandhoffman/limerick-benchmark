@@ -115,6 +115,8 @@ async def run_agent(
     }
     nudge_count = 0
     MAX_NUDGES = 2
+    invalid_tool_count = 0
+    MAX_INVALID_TOOLS = 5
 
     def append_trace(entry: dict) -> None:
         entry["ts"] = _ts()
@@ -199,8 +201,13 @@ async def run_agent(
                 fn_args = json.loads(tc.function.arguments)
 
                 if fn_name != "bash":
-                    # Model called a nonexistent tool — tell it what's available
-                    logger.warning("Model called unknown tool '%s' — returning error", fn_name)
+                    invalid_tool_count += 1
+                    logger.warning("Model called unknown tool '%s' (%d/%d) — returning error",
+                                   fn_name, invalid_tool_count, MAX_INVALID_TOOLS)
+                    if invalid_tool_count >= MAX_INVALID_TOOLS:
+                        logger.error("Too many invalid tool calls — aborting agent")
+                        stats["finish_reason"] = "invalid_tool_loop"
+                        return
                     output = f"Error: unknown tool '{fn_name}'. The only available tool is 'bash'. Use bash to run shell commands."
                     append_trace({
                         "type": "tool_result",
