@@ -119,6 +119,7 @@ async def _run_one(
     timeout: int,
     enable_hardware_metrics: bool,
     agent_type: str = "react",
+    run_label: str = "aider",
 ) -> dict[str, Any]:
     """Run the full benchmark pipeline for a single model."""
     model_id: str = model["id"]
@@ -169,6 +170,7 @@ async def _run_one(
         token_state=token_state,
         timeout=timeout,
         agent_type=agent_type,
+        run_label=run_label,
     )
 
     wall_elapsed = round(time.time() - wall_start, 1)
@@ -247,14 +249,18 @@ async def run_benchmark(
     )
 
     summaries = []
+    total = len(models)
     for i, model in enumerate(models, 1):
-        logger.info("Run %d/%d: %s", i, len(models), model["id"])
+        logger.info("Run %d/%d: %s", i, total, model["id"])
+        slug = model["id"].replace(":", "-")
+        run_label = f"{i}/{total}:{slug}:{agent_type}"
         summary = await _run_one(
             model,
             task_prompt,
             timeout,
             enable_hardware_metrics=enable_hardware_metrics,
             agent_type=agent_type,
+            run_label=run_label,
         )
         summaries.append(summary)
 

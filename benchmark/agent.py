@@ -383,6 +383,7 @@ async def _run_aider(
     trace_path: Path,
     token_state: dict[str, Any],
     timeout: int,
+    run_label: str = "aider",
 ) -> dict[str, Any]:
     """
     Run aider-chat in headless mode for the task.
@@ -459,7 +460,7 @@ async def _run_aider(
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if not text:
                     continue
-                print(f"[aider] {text}", flush=True)
+                print(f"[{run_label}] {text}", flush=True)
                 append_trace({"type": "aider_log", "content": text})
 
                 normalized = _normalize_aider_line(text)
@@ -571,6 +572,7 @@ async def run_agent(
     token_state: dict[str, Any],
     timeout: int = TIMEOUT_SECONDS,
     agent_type: str = "react",
+    run_label: str = "aider",
 ) -> dict[str, Any]:
     if agent_type == "aider":
         return await _run_aider(
@@ -581,6 +583,7 @@ async def run_agent(
             trace_path=trace_path,
             token_state=token_state,
             timeout=timeout,
+            run_label=run_label,
         )
     return await _run_react(
         model_id=model_id,
