@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from .agent import run_agent, TIMEOUT_SECONDS
-from .evaluator import evaluate
+from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
+from .process_utils import assert_port_available
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ async def _run_one(model: dict[str, Any], task_prompt: str, timeout: int) -> dic
     """Run the full benchmark pipeline for a single model."""
     model_id: str = model["id"]
     provider: str = model.get("provider", "ollama")
+
+    assert_port_available(PORT, f"starting run for {model_id}")
 
     run_dir = _run_dir(model_id)
     run_dir.mkdir(parents=True)
@@ -87,6 +90,7 @@ async def _run_one(model: dict[str, Any], task_prompt: str, timeout: int) -> dic
     wall_elapsed = round(time.time() - wall_start, 1)
     collector.stop()
 
+    assert_port_available(PORT, f"evaluating {model_id}")
     logger.info("Agent done in %.1fs — evaluating…", wall_elapsed)
     eval_result = await evaluate(workspace, run_dir)
 

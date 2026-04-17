@@ -10,6 +10,13 @@ from typing import Any
 
 import litellm
 
+from .process_utils import (
+    listener_matches_process_groups,
+    port_accepts_connections,
+    process_group_exists,
+    terminate_process_groups,
+)
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 900  # 15 minutes hard limit
@@ -52,25 +59,50 @@ TOOLS = [
 ]
 
 
-async def _run_bash(command: str, workspace: Path) -> str:
+def _parse_tool_arguments(raw_args: str | None) -> dict[str, Any]:
+    """Decode function-call JSON arguments into a dict."""
+    if raw_args is None:
+        return {}
+
+    try:
+        data = json.loads(raw_args)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON arguments: {exc.msg}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("tool arguments must decode to a JSON object")
+    return data
+
+
+async def _run_bash(command: str, workspace: Path, active_process_groups: set[int]) -> str:
     logger.debug("bash: %s", command[:120])
+    proc: asyncio.subprocess.Process | None = None
+    pgid: int | None = None
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=workspace,
+            start_new_session=True,
         )
+        pgid = proc.pid
+        active_process_groups.add(pgid)
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=CMD_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            proc.kill()
+            await terminate_process_groups({pgid})
             return f"[timeout after {CMD_TIMEOUT_SECONDS}s]"
+        except asyncio.CancelledError:
+            await terminate_process_groups({pgid})
+            raise
 
         output = stdout.decode("utf-8", errors="replace")
         if len(output) > MAX_OUTPUT_CHARS:
             half = MAX_OUTPUT_CHARS // 2
             output = output[:half] + f"\n...[{len(output) - MAX_OUTPUT_CHARS} chars truncated]...\n" + output[-half:]
+        if pgid is not None and not process_group_exists(pgid):
+            active_process_groups.discard(pgid)
         return output or "(no output)"
     except Exception as exc:
         return f"[error: {exc}]"
@@ -120,6 +152,7 @@ async def run_agent(
     MAX_NUDGES = 2
     invalid_tool_count = 0
     MAX_INVALID_TOOLS = 5
+    active_process_groups: set[int] = set()
 
     def append_trace(entry: dict) -> None:
         entry["ts"] = _ts()
@@ -226,15 +259,7 @@ async def run_agent(
 
             if not msg.tool_calls:
                 # Check if the task looks complete: server running on port 8181
-                import socket
-                def _port_open() -> bool:
-                    try:
-                        with socket.create_connection(("localhost", 8181), timeout=1):
-                            return True
-                    except OSError:
-                        return False
-
-                if _port_open():
+                if port_accepts_connections(8181) and listener_matches_process_groups(8181, active_process_groups):
                     # Server is up — task is done
                     stats["finish_reason"] = choice.finish_reason
                     logger.info("Agent finished with server running: %s", choice.finish_reason)
@@ -268,7 +293,29 @@ async def run_agent(
             for tc in msg.tool_calls:
                 token_state["tool_calls"] += 1
                 fn_name = tc.function.name.strip()
-                fn_args = json.loads(tc.function.arguments)
+                try:
+                    fn_args = _parse_tool_arguments(tc.function.arguments)
+                except ValueError as exc:
+                    invalid_tool_count += 1
+                    logger.warning("Model sent invalid tool arguments (%d/%d): %s",
+                                   invalid_tool_count, MAX_INVALID_TOOLS, exc)
+                    if invalid_tool_count >= MAX_INVALID_TOOLS:
+                        logger.error("Too many invalid tool calls — aborting agent")
+                        stats["finish_reason"] = "invalid_tool_loop"
+                        return
+                    output = f"Error: invalid tool arguments. {exc}. Use the bash tool with JSON like {{\"command\": \"pwd\"}}."
+                    append_trace({
+                        "type": "tool_result",
+                        "call_id": tc.id,
+                        "command": "[invalid tool arguments]",
+                        "output": output,
+                    })
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": output,
+                    })
+                    continue
 
                 if fn_name != "bash":
                     invalid_tool_count += 1
@@ -293,8 +340,29 @@ async def run_agent(
                     continue
 
                 command = fn_args.get("command", "")
+                if not isinstance(command, str) or not command.strip():
+                    invalid_tool_count += 1
+                    logger.warning("Model omitted string 'command' argument (%d/%d)",
+                                   invalid_tool_count, MAX_INVALID_TOOLS)
+                    if invalid_tool_count >= MAX_INVALID_TOOLS:
+                        logger.error("Too many invalid tool calls — aborting agent")
+                        stats["finish_reason"] = "invalid_tool_loop"
+                        return
+                    output = "Error: bash tool requires a non-empty string 'command' argument."
+                    append_trace({
+                        "type": "tool_result",
+                        "call_id": tc.id,
+                        "command": "[missing command]",
+                        "output": output,
+                    })
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": output,
+                    })
+                    continue
                 print(f"\n$ {command}", flush=True)
-                output = await _run_bash(command, workspace)
+                output = await _run_bash(command, workspace, active_process_groups)
                 print(output[:1000] if output else "(no output)", flush=True)
                 logger.info("tool[%d] bash done", token_state["tool_calls"])
 
@@ -324,6 +392,7 @@ async def run_agent(
         stats["finish_reason"] = f"error"
         logger.error("Agent error: %s", exc, exc_info=True)
     finally:
+        await terminate_process_groups(active_process_groups)
         save_trace()
 
     return stats

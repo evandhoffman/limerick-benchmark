@@ -1,13 +1,22 @@
 """Post-run evaluation: start the generated server, check HTTP 200, write run.sh."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
 import stat
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+
+from .process_utils import (
+    assert_port_available,
+    listener_belongs_to_process_tree,
+    terminate_process_group,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,31 +25,74 @@ STARTUP_TIMEOUT = 30  # seconds to wait for server to come up
 POLL_INTERVAL = 1.0
 
 
-def _find_entry_point(workspace: Path) -> str | None:
-    """Return the command to start the app, or None if we can't figure it out."""
-    # Prefer an explicit run.sh the model may have written
+def _script_commands_from_pyproject(workspace: Path) -> list[str]:
+    pyproject = workspace / "pyproject.toml"
+    if not pyproject.exists():
+        return []
+
+    try:
+        data = tomllib.loads(pyproject.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+
+    scripts = data.get("project", {}).get("scripts", {})
+    if not isinstance(scripts, dict):
+        return []
+    return [f"uv run {name}" for name in scripts]
+
+
+def _candidate_entry_points(workspace: Path) -> list[str]:
+    """Return plausible commands to start the generated app."""
+    candidates: list[str] = []
+
+    def add(command: str) -> None:
+        if command not in candidates:
+            candidates.append(command)
+
     run_sh = workspace / "run.sh"
     if run_sh.exists():
-        return f"bash run.sh"
+        add("bash run.sh")
 
-    # Common entry points
-    for name in ("app.py", "main.py", "server.py", "web.py"):
-        if (workspace / name).exists():
-            return f"uv run python {name}"
+    for command in _script_commands_from_pyproject(workspace):
+        add(command)
 
-    # Fall back to any .py file containing 'Flask' or 'app.run'
-    for py in workspace.glob("*.py"):
-        text = py.read_text(errors="replace")
-        if "Flask" in text or "app.run" in text:
-            return f"uv run python {py.name}"
+    search_roots = [workspace]
+    src_dir = workspace / "src"
+    if src_dir.exists():
+        search_roots.append(src_dir)
 
-    return None
+    for root in search_roots:
+        for name in ("app.py", "main.py", "server.py", "web.py"):
+            py = root / name
+            if py.exists():
+                add(f"uv run python {py.relative_to(workspace)}")
+
+        for package_main in sorted(root.glob("*/__main__.py")):
+            package_dir = package_main.parent
+            if not package_dir.name.isidentifier():
+                continue
+            if root == src_dir:
+                add(f"uv run python -m {package_dir.name}")
+            else:
+                module = package_dir.relative_to(workspace).as_posix().replace("/", ".")
+                add(f"uv run python -m {module}")
+
+        python_files = sorted(root.glob("*.py"))
+        for py in python_files:
+            text = py.read_text(errors="replace")
+            if "Flask" in text or "app.run" in text:
+                add(f"uv run python {py.relative_to(workspace)}")
+
+        if len(python_files) == 1:
+            add(f"uv run python {python_files[0].relative_to(workspace)}")
+
+    return candidates
 
 
 async def _wait_for_port(port: int, timeout: float) -> bool:
     """Poll localhost:port until it accepts connections. Returns True if up."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         try:
             _, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.close()
@@ -51,47 +103,40 @@ async def _wait_for_port(port: int, timeout: float) -> bool:
     return False
 
 
-async def evaluate(workspace: Path, results_dir: Path) -> dict[str, Any]:
-    """
-    Try to start the generated server and check it responds with HTTP 200.
-    Writes run.sh to results_dir for later manual evaluation.
-    Returns an evaluation dict.
-    """
+async def _try_entry_point(workspace: Path, entry_cmd: str) -> dict[str, Any]:
+    """Start one candidate entry point and return the evaluation result."""
+    assert_port_available(PORT, f"starting evaluator command '{entry_cmd}'")
+
     result: dict[str, Any] = {
-        "entry_point": None,
+        "entry_point": entry_cmd,
         "server_started": False,
         "http_status": None,
         "response_bytes": None,
         "error": None,
     }
 
-    entry_cmd = _find_entry_point(workspace)
-    result["entry_point"] = entry_cmd
-
-    if entry_cmd is None:
-        logger.warning("No entry point found in workspace")
-        result["error"] = "no_entry_point"
-        _write_run_sh(results_dir, workspace, None)
-        return result
-
-    _write_run_sh(results_dir, workspace, entry_cmd)
-
     proc = await asyncio.create_subprocess_shell(
         entry_cmd,
         cwd=workspace,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
     )
 
     try:
         up = await _wait_for_port(PORT, STARTUP_TIMEOUT)
         if not up:
-            logger.warning("Server did not come up on port %d within %ds", PORT, STARTUP_TIMEOUT)
+            logger.warning("Server did not come up on port %d within %ds for '%s'", PORT, STARTUP_TIMEOUT, entry_cmd)
             result["error"] = "port_never_opened"
             return result
 
+        if not listener_belongs_to_process_tree(PORT, proc.pid):
+            logger.warning("Port %d listener was not started by '%s'", PORT, entry_cmd)
+            result["error"] = "unexpected_listener"
+            return result
+
         result["server_started"] = True
-        logger.info("Server up on port %d", PORT)
+        logger.info("Server up on port %d via '%s'", PORT, entry_cmd)
 
         async with aiohttp.ClientSession() as session:
             try:
@@ -105,17 +150,54 @@ async def evaluate(workspace: Path, results_dir: Path) -> dict[str, Any]:
                     logger.info("GET / → %d (%d bytes)", resp.status, len(body))
             except Exception as exc:
                 result["error"] = f"http_error: {exc}"
-                logger.warning("HTTP check failed: %s", exc)
+                logger.warning("HTTP check failed for '%s': %s", entry_cmd, exc)
     finally:
-        if proc.returncode is None:  # still running
-            try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
+        await terminate_process_group(proc.pid)
+        with contextlib.suppress(RuntimeError):
+            assert_port_available(PORT, f"cleaning up evaluator command '{entry_cmd}'")
 
     return result
+
+
+async def evaluate(workspace: Path, results_dir: Path) -> dict[str, Any]:
+    """
+    Try to start the generated server and check it responds with HTTP 200.
+    Writes run.sh to results_dir for later manual evaluation.
+    Returns an evaluation dict.
+    """
+    entry_points = _candidate_entry_points(workspace)
+    if not entry_points:
+        logger.warning("No entry point found in workspace")
+        result = {
+            "entry_point": None,
+            "entry_point_candidates": [],
+            "server_started": False,
+            "http_status": None,
+            "response_bytes": None,
+            "error": "no_entry_point",
+        }
+        _write_run_sh(results_dir, workspace, None)
+        return result
+
+    last_result: dict[str, Any] = {
+        "entry_point": entry_points[0],
+        "entry_point_candidates": entry_points,
+        "server_started": False,
+        "http_status": None,
+        "response_bytes": None,
+        "error": "port_never_opened",
+    }
+
+    for entry_cmd in entry_points:
+        candidate_result = await _try_entry_point(workspace, entry_cmd)
+        candidate_result["entry_point_candidates"] = entry_points
+        last_result = candidate_result
+        if candidate_result.get("http_status") == 200:
+            _write_run_sh(results_dir, workspace, entry_cmd)
+            return candidate_result
+
+    _write_run_sh(results_dir, workspace, last_result.get("entry_point"))
+    return last_result
 
 
 def _write_run_sh(results_dir: Path, workspace: Path, entry_cmd: str | None) -> None:
