@@ -58,11 +58,12 @@ currently only `limerick.md`) and `models.yaml` (the model catalog with
 Generated workspaces live **outside** the repo tree at
 `~/.limerick-benchmark/workspaces/` so `uv init` inside them cannot walk up
 and auto-register as a member of this project's `pyproject.toml`. Never move
-them back under the repo. `runner._prepare_workspace` already runs
-`uv init . --python 3.12` and `uv add flask` before the agent starts, and the
-task prompt is prefixed with an environment note telling the model not to run
-`uv init` / `uv add` again — keep those assumptions in sync if you change the
-prep.
+them back under the repo. `runner._prepare_workspace` deliberately does NOT
+run `uv init` or install any dependencies — project setup is part of what
+the benchmark measures. It only seeds task-specific data files (for the
+limerick task, `tasks/limericks.txt` is copied in as `limericks.txt`). The
+environment note prefixed to the task prompt tells the model that setup is
+its responsibility; keep that note in sync if you change the prep.
 
 ## Build, Test, and Development Commands
 

@@ -38,13 +38,17 @@ is the expected approach.
 
 ## Recommended order of work
 
-1. Write a minimal `app.py` that reads `limericks.txt`, picks one at
+1. Set up the project: `uv init .` and `uv add flask` (or any
+   equivalent — `pip install flask` inside a venv is also fine). The
+   workspace is empty; setting it up is part of the exercise.
+2. Write a minimal `app.py` that reads `limericks.txt`, picks one at
    random, and returns it wrapped in an HTML page with a meta refresh
    tag. Keep it small — under 50 lines.
-2. Start it with `uv run python app.py &` and verify with
+3. Start it with `uv run python app.py &` (or `python app.py &` if
+   you used a venv) and verify with
    `curl -sS http://localhost:8181`. Confirm you see `200` and a
    limerick.
-3. Stop, and you are done.
+4. Stop, and you are done.
 
 ## Hard rules
 

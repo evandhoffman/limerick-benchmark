@@ -4,9 +4,7 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
 import time
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +12,7 @@ from typing import Any
 from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS, run_agent
 from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
-from .process_utils import assert_port_available, sanitized_subprocess_env
+from .process_utils import assert_port_available
 from .report import write_markdown_report
 
 logger = logging.getLogger(__name__)
@@ -50,38 +48,13 @@ def _load_task(task_name: str) -> str:
 
 
 def _prepare_workspace(workspace: Path, task_name: str | None = None) -> None:
-    """Initialize the workspace as a uv project with Flask preinstalled."""
-    pyproject = workspace / "pyproject.toml"
-    if not pyproject.exists():
-        subprocess.run(
-            ["uv", "init", ".", "--python", "3.12", "--name", workspace.name.replace("_", "-")],
-            cwd=workspace,
-            check=True,
-            capture_output=True,
-            env=sanitized_subprocess_env(),
-            text=True,
-        )
+    """Seed the workspace with task resources only.
 
-    # Drop the stock `main.py` uv produces so models can't accidentally
-    # leave it as the entry point.
-    main_py = workspace / "main.py"
-    if main_py.exists():
-        main_py.unlink()
-
+    The model is responsible for installing its own dependencies
+    (e.g. running `uv init` / `uv add flask` or `pip install flask`).
+    """
     if task_name:
         _seed_task_resources(workspace, task_name)
-
-    if _workspace_has_dependency(workspace, "flask"):
-        return
-
-    subprocess.run(
-        ["uv", "add", "flask"],
-        cwd=workspace,
-        check=True,
-        capture_output=True,
-        env=sanitized_subprocess_env(),
-        text=True,
-    )
 
 
 def _seed_task_resources(workspace: Path, task_name: str) -> None:
@@ -92,35 +65,14 @@ def _seed_task_resources(workspace: Path, task_name: str) -> None:
             (workspace / "limericks.txt").write_bytes(src.read_bytes())
 
 
-def _workspace_has_dependency(workspace: Path, dependency_name: str) -> bool:
-    """Return True if the pyproject already declares the dependency."""
-    pyproject = workspace / "pyproject.toml"
-    if not pyproject.exists():
-        return False
-
-    try:
-        data = tomllib.loads(pyproject.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return False
-
-    normalized = dependency_name.lower().replace("_", "-")
-    for spec in data.get("project", {}).get("dependencies", []) or []:
-        token = spec.split(";")[0].strip()
-        for marker in ("[", "=", "<", ">", "!", "~"):
-            if marker in token:
-                token = token.split(marker, 1)[0]
-        if token.strip().lower().replace("_", "-") == normalized:
-            return True
-    return False
-
-
 def _task_prompt_with_workspace_note(task_prompt: str, *, task_name: str | None = None) -> str:
-    """Add a stable environment note that the workspace is already prepared."""
+    """Add a stable environment note describing the workspace state."""
     notes = [
-        "- The current directory is already initialized as a uv project with Python 3.12.",
-        "- Do not run `uv init` again.",
-        "- Flask is already installed. Do not run `uv add flask`.",
-        "- There is NO `main.py` in this workspace. Create `app.py` as the entry point.",
+        "- The current directory is empty except for any task data files listed below.",
+        "- Python 3.12 and `uv` are available on PATH. You are responsible for setting "
+        "up the project (e.g. `uv init . && uv add flask`, or `pip install flask` in a "
+        "venv — your choice).",
+        "- Create `app.py` as the entry point; do not leave a stock `main.py` behind.",
     ]
     if task_name == "limerick":
         notes.append(
