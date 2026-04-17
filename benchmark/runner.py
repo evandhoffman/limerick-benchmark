@@ -31,9 +31,14 @@ def _slug(model_id: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", model_id)
 
 
-def _run_dir(model_id: str) -> Path:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return RESULTS_ROOT / f"{ts}_{_slug(model_id)}"
+def _new_job_id() -> str:
+    """Build a human-sortable job id (one per `run_benchmark` invocation)."""
+    return datetime.now().strftime("%Y%m%d.%H%M%S")
+
+
+def _run_dir(job_id: str, model_id: str) -> Path:
+    """Per-model results directory under the job's collation dir."""
+    return RESULTS_ROOT / job_id / _slug(model_id)
 
 
 def _load_task(task_name: str) -> str:
@@ -118,6 +123,7 @@ async def _run_one(
     task_prompt: str,
     timeout: int,
     enable_hardware_metrics: bool,
+    job_id: str,
     agent_type: str = "react",
     run_label: str = "aider",
 ) -> dict[str, Any]:
@@ -127,12 +133,13 @@ async def _run_one(
 
     assert_port_available(PORT, f"starting run for {model_id}")
 
-    run_dir = _run_dir(model_id)
+    run_dir = _run_dir(job_id, model_id)
     run_dir.mkdir(parents=True)
 
     # Workspace is outside the repo to prevent uv from treating our
     # pyproject.toml as a parent workspace when the model runs `uv init`.
-    workspace = WORKSPACE_BASE / run_dir.name
+    # Nested under the job id so per-job cleanup is one `rm -rf`.
+    workspace = WORKSPACE_BASE / job_id / _slug(model_id)
     workspace.mkdir(parents=True)
     _prepare_workspace(workspace)
 
@@ -239,14 +246,20 @@ async def run_benchmark(
     task_prompt = _load_task(task_name)
     RESULTS_ROOT.mkdir(exist_ok=True)
 
+    job_id = _new_job_id()
+    job_dir = RESULTS_ROOT / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info(
-        "Starting benchmark: %d model(s), task=%s, timeout=%ds, hardware_metrics=%s, agent=%s",
+        "Starting benchmark job %s: %d model(s), task=%s, timeout=%ds, hardware_metrics=%s, agent=%s",
+        job_id,
         len(models),
         task_name,
         timeout,
         enable_hardware_metrics,
         agent_type,
     )
+    logger.info("Job dir: %s", job_dir)
 
     summaries = []
     total = len(models)
@@ -259,6 +272,7 @@ async def run_benchmark(
             task_prompt,
             timeout,
             enable_hardware_metrics=enable_hardware_metrics,
+            job_id=job_id,
             agent_type=agent_type,
             run_label=run_label,
         )

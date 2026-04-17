@@ -4,8 +4,12 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from benchmark.runner import (
+    RESULTS_ROOT,
+    _new_job_id,
     _prepare_workspace,
+    _run_dir,
     _should_evaluate,
+    _slug,
     _task_prompt_with_workspace_note,
     _workspace_has_dependency,
 )
@@ -82,6 +86,20 @@ class RunnerWorkspacePreparationTests(unittest.TestCase):
         self.assertIn("Flask is already installed", prompt)
         self.assertIn("Do not run `uv add flask`", prompt)
         self.assertTrue(prompt.endswith("Build the app."))
+
+    def test_run_dir_nests_model_under_job_id(self) -> None:
+        job_id = "20260417.073034"
+        run_dir = _run_dir(job_id, "gemma4:e2b")
+        self.assertEqual(run_dir, RESULTS_ROOT / job_id / _slug("gemma4:e2b"))
+        self.assertEqual(run_dir.parent.name, job_id)
+        self.assertNotIn(":", run_dir.name)
+
+    def test_new_job_id_matches_expected_shape(self) -> None:
+        job_id = _new_job_id()
+        date_part, _, time_part = job_id.partition(".")
+        self.assertEqual(len(date_part), 8)
+        self.assertEqual(len(time_part), 6)
+        self.assertTrue(date_part.isdigit() and time_part.isdigit())
 
     def test_workspace_has_dependency(self) -> None:
         with TemporaryDirectory() as tmp:

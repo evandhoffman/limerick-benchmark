@@ -11,11 +11,15 @@ directly** — do not create per-agent variants.
 
 - `__main__.py`: CLI entry point (`uv run benchmark {list,run}`). Parses args,
   loads `models.yaml`, prints the preflight table, dispatches to `runner`.
-- `runner.py`: Orchestrates serial model runs, prepares each workspace under
-  `~/.limerick-benchmark/workspaces/<timestamp>_<slug>/`, writes artifacts to
-  `results/<timestamp>_<slug>/` (with a `workspace` symlink back to the
-  out-of-tree workspace), and builds a per-run label like
-  `3/10:qwen3.5-9b:aider` that agent backends use as their log prefix.
+- `runner.py`: Orchestrates serial model runs. Each `run_benchmark`
+  invocation gets a single job id (`YYYYMMDD.HHMMSS`, produced by
+  `_new_job_id`) and every per-model run is collated under it:
+  results at `results/<job_id>/<slug>/` and workspaces at
+  `~/.limerick-benchmark/workspaces/<job_id>/<slug>/` (with a `workspace`
+  symlink back to the out-of-tree workspace). Also builds a per-run label
+  like `3/10:qwen3.5-9b:aider` that agent backends use as their log prefix.
+  Cleaning up old work is `rm -rf results/<job_id>` plus the corresponding
+  workspace subtree.
 - `agent.py`: Hosts both agent backends.
   - `_run_react`: ReAct loop using `litellm` with a single `bash` tool (60 s
     per-command timeout, 15-minute overall hard limit). Loop-detection guards

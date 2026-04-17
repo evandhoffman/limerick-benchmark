@@ -152,18 +152,23 @@ Full catalog with all variants and exclusion notes: [`models.yaml`](models.yaml)
 
 ## Result directory layout
 
+Each `benchmark run` invocation gets a single **job ID** (`YYYYMMDD.HHMMSS`) and all per-model results are collated under it, so cleaning up an old run is `rm -rf results/<job_id>`:
+
 ```
 results/
-└── 20260416_143022_gemma4_e2b/
-    ├── workspace -> ~/.limerick-benchmark/workspaces/20260416_143022_gemma4_e2b/
-    │                 (symlink — generated code lives here, outside the repo)
-    ├── run.sh            ← run this to start the server for manual eval
-    ├── trace.jsonl       ← full agent message history (prompts, tool calls, outputs)
-    ├── metrics.csv       ← timestamped system metrics
-    └── summary.json      ← run stats (tokens, timing, eval result)
+└── 20260416.143022/                             ← one job ID per invocation
+    ├── gemma4_e2b/
+    │   ├── workspace -> ~/.limerick-benchmark/workspaces/20260416.143022/gemma4_e2b/
+    │   │                 (symlink — generated code lives here, outside the repo)
+    │   ├── run.sh            ← run this to start the server for manual eval
+    │   ├── trace.jsonl       ← full agent message history (prompts, tool calls, outputs)
+    │   ├── metrics.csv       ← timestamped system metrics
+    │   └── summary.json      ← run stats (tokens, timing, eval result)
+    └── qwen3.5_9b/
+        └── …
 ```
 
-Workspaces are kept outside the repo tree so that `uv init` inside them cannot auto-register as a parent workspace member in this project's `pyproject.toml`. They are pre-initialized with Python 3.12 and Flask before the agent starts.
+Workspaces are kept outside the repo tree so that `uv init` inside them cannot auto-register as a parent workspace member in this project's `pyproject.toml`. They are pre-initialized with Python 3.12 and Flask before the agent starts, and are nested under the same job ID so dropping both the results and workspace side of a run is a two-command cleanup.
 
 ## metrics.csv columns
 
