@@ -3,9 +3,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from benchmark.agent import (
+    _aider_has_repeating_cycle,
+    _aider_low_uniqueness,
     _declared_dependencies,
     _contains_redundant_uv_init,
+    _extract_aider_edit_target,
     _format_status_line,
+    _hash_workspace_tree,
+    _normalize_aider_line,
     _normalize_dependency_name,
     _parse_tool_arguments,
     _prepare_command,
@@ -122,3 +127,62 @@ class AgentWorkspaceDetectionTests(unittest.TestCase):
         self.assertEqual(_written_file_target("cat <<EOF > app.py\nhello\nEOF"), "app.py")
         self.assertEqual(_written_file_target("printf foo > src/app.py"), "src/app.py")
         self.assertIsNone(_written_file_target("uv run python app.py"))
+
+
+class AiderLoopDetectionTests(unittest.TestCase):
+    def test_normalize_strips_ansi_numbers_and_paths(self) -> None:
+        line = "\x1b[31mApplied edit to /tmp/abc123/app.py at 12:34:56 (1234 tokens)\x1b[0m"
+        normalized = _normalize_aider_line(line)
+        self.assertNotIn("\x1b", normalized)
+        self.assertNotIn("1234", normalized)
+        self.assertIn("<path>", normalized)
+        self.assertIn("<n>", normalized)
+
+    def test_normalize_masks_near_duplicates_across_runs(self) -> None:
+        a = _normalize_aider_line("Retrying app.py (attempt 3 of 5)")
+        b = _normalize_aider_line("Retrying app.py (attempt 4 of 5)")
+        self.assertEqual(a, b)
+
+    def test_low_uniqueness_returns_false_before_window_full(self) -> None:
+        self.assertFalse(_aider_low_uniqueness(["a", "b", "c"], window=60, threshold=8))
+
+    def test_low_uniqueness_trips_when_few_unique_lines(self) -> None:
+        lines = (["x", "y"] * 30)[-60:]
+        self.assertTrue(_aider_low_uniqueness(lines, window=60, threshold=8))
+
+    def test_low_uniqueness_accepts_varied_output(self) -> None:
+        lines = [f"line-{i}" for i in range(60)]
+        self.assertFalse(_aider_low_uniqueness(lines, window=60, threshold=8))
+
+    def test_cycle_detection_trips_on_repeating_block(self) -> None:
+        block = ["thinking", "editing app.py", "running tests", "failure"]
+        lines = block * 3
+        self.assertTrue(_aider_has_repeating_cycle(lines, min_period=2, max_period=10, min_repeats=3))
+
+    def test_cycle_detection_ignores_non_repeating_tail(self) -> None:
+        lines = [f"step-{i}" for i in range(30)]
+        self.assertFalse(_aider_has_repeating_cycle(lines))
+
+    def test_extract_aider_edit_target_matches_common_patterns(self) -> None:
+        self.assertEqual(_extract_aider_edit_target("Applied edit to app.py"), "app.py")
+        self.assertEqual(_extract_aider_edit_target("Edited src/app.py."), "src/app.py")
+        self.assertEqual(_extract_aider_edit_target("Wrote changes to tests/test_app.py"), "tests/test_app.py")
+        self.assertIsNone(_extract_aider_edit_target("Thinking about the problem..."))
+
+    def test_workspace_hash_changes_with_content_and_ignores_caches(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "app.py").write_text("print('hi')\n")
+            cache_dir = workspace / "__pycache__"
+            cache_dir.mkdir()
+            (cache_dir / "noise.pyc").write_bytes(b"\x00" * 16)
+            (workspace / ".aider.chat.history.md").write_text("noise")
+
+            h1 = _hash_workspace_tree(workspace)
+
+            (cache_dir / "noise.pyc").write_bytes(b"\x00" * 32)
+            (workspace / ".aider.chat.history.md").write_text("different noise")
+            self.assertEqual(h1, _hash_workspace_tree(workspace))
+
+            (workspace / "app.py").write_text("print('bye')\n")
+            self.assertNotEqual(h1, _hash_workspace_tree(workspace))

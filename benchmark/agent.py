@@ -1,11 +1,13 @@
 """Agent loop: sends a task to a model, executes bash tool calls, records trace."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import shlex
 import sys
+import time
 import tomllib
 import types
 from datetime import datetime, timezone
@@ -268,6 +270,110 @@ def _ts() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# --- Aider loop-detection helpers ---------------------------------------------
+
+AIDER_REPEAT_WINDOW = 60
+AIDER_UNIQUE_THRESHOLD = 8
+AIDER_CYCLE_MIN_PERIOD = 2
+AIDER_CYCLE_MAX_PERIOD = 20
+AIDER_CYCLE_MIN_REPEATS = 3
+AIDER_MAX_EDITS_PER_FILE = 6
+AIDER_STAGNATION_SECONDS = 180
+AIDER_STAGNATION_POLL_SECONDS = 20
+AIDER_NORMALIZED_HISTORY_MAX = 400
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_NUMERIC_RE = re.compile(r"\b\d+(?:[.,]\d+)*\b")
+_PATH_LIKE_RE = re.compile(r"(?:[A-Za-z]:)?(?:[\w.-]+[/\\])+[\w.-]+")
+_HEX_RE = re.compile(r"\b[0-9a-f]{8,}\b", re.IGNORECASE)
+
+_AIDER_EDIT_PATTERNS = [
+    re.compile(r"Applied edit to\s+(\S+)"),
+    re.compile(r"Edited\s+(\S+)"),
+    re.compile(r"Wrote\s+changes\s+to\s+(\S+)"),
+    re.compile(r"Writing\s+(?:to\s+)?(\S+)"),
+]
+
+_AIDER_TREE_IGNORE_DIR_NAMES = {".venv", ".git", "__pycache__", "node_modules"}
+_AIDER_TREE_IGNORE_PREFIXES = (".aider.",)
+
+
+def _normalize_aider_line(text: str) -> str:
+    """Collapse noise (ANSI, paths, numbers, hex) so repeats with minor variation still match."""
+    s = _ANSI_RE.sub("", text)
+    s = _HEX_RE.sub("<hex>", s)
+    s = _PATH_LIKE_RE.sub("<path>", s)
+    s = _NUMERIC_RE.sub("<n>", s)
+    return " ".join(s.split())
+
+
+def _aider_low_uniqueness(
+    normalized: list[str],
+    window: int = AIDER_REPEAT_WINDOW,
+    threshold: int = AIDER_UNIQUE_THRESHOLD,
+) -> bool:
+    """True if the last `window` normalized lines have fewer than `threshold` unique values."""
+    if len(normalized) < window:
+        return False
+    return len(set(normalized[-window:])) < threshold
+
+
+def _aider_has_repeating_cycle(
+    normalized: list[str],
+    min_period: int = AIDER_CYCLE_MIN_PERIOD,
+    max_period: int = AIDER_CYCLE_MAX_PERIOD,
+    min_repeats: int = AIDER_CYCLE_MIN_REPEATS,
+) -> bool:
+    """True if the tail contains a k-line block repeating at least `min_repeats` times."""
+    n = len(normalized)
+    upper = min(max_period, n // min_repeats)
+    for period in range(min_period, upper + 1):
+        needed = period * min_repeats
+        if n < needed:
+            continue
+        tail = normalized[-needed:]
+        block = tail[:period]
+        if all(tail[i * period : (i + 1) * period] == block for i in range(min_repeats)):
+            return True
+    return False
+
+
+def _extract_aider_edit_target(line: str) -> str | None:
+    for pat in _AIDER_EDIT_PATTERNS:
+        m = pat.search(line)
+        if m:
+            return m.group(1).strip(".,:;\"'`")
+    return None
+
+
+def _hash_workspace_tree(workspace: Path) -> str:
+    """Content hash of the workspace, skipping caches and virtualenvs."""
+    h = hashlib.sha256()
+    if not workspace.exists():
+        return h.hexdigest()
+    for path in sorted(workspace.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(workspace)
+        except ValueError:
+            continue
+        parts = rel.parts
+        if any(p in _AIDER_TREE_IGNORE_DIR_NAMES for p in parts):
+            continue
+        if any(p.startswith(_AIDER_TREE_IGNORE_PREFIXES) for p in parts):
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        h.update(str(rel).encode("utf-8"))
+        h.update(b"\0")
+        h.update(hashlib.sha256(data).digest())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 async def _run_aider(
     *,
     model_id: str,
@@ -333,43 +439,114 @@ async def _run_aider(
         )
         pgid = proc.pid
 
-        # Aider doesn't give us token counts easily via CLI.
-        # We just capture the log.
-        repeat_detector: list[str] = []
-        MAX_REPEAT_LINES = 20
+        normalized_lines: list[str] = []
+        edit_counts: dict[str, int] = {}
+        abort_reason: str | None = None
 
-        async def read_output():
+        def trip(reason: str) -> None:
+            nonlocal abort_reason
+            if abort_reason is None:
+                abort_reason = reason
+                logger.error("Aborting aider: %s", reason)
+
+        async def read_output() -> None:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     break
+                if abort_reason:
+                    break
                 text = line.decode("utf-8", errors="replace").rstrip()
-                if text:
-                    print(f"[aider] {text}", flush=True)
-                    append_trace({"type": "aider_log", "content": text})
+                if not text:
+                    continue
+                print(f"[aider] {text}", flush=True)
+                append_trace({"type": "aider_log", "content": text})
 
-                    # Simple loop detection: if the same line repeats too much
-                    repeat_detector.append(text)
-                    if len(repeat_detector) > MAX_REPEAT_LINES:
-                        repeat_detector.pop(0)
+                normalized = _normalize_aider_line(text)
+                if normalized:
+                    normalized_lines.append(normalized)
+                    if len(normalized_lines) > AIDER_NORMALIZED_HISTORY_MAX:
+                        del normalized_lines[:-AIDER_NORMALIZED_HISTORY_MAX]
 
-                        # Check for 1-line or 2-line loops
-                        if len(set(repeat_detector)) < 3: # Mostly the same 1 or 2 lines
-                            stats["error"] = "Detected infinite loop in model output"
-                            stats["finish_reason"] = "stuck_loop"
-                            logger.error("Aborting aider: detected infinite loop in log output")
-                            await terminate_process_groups({pgid})
-                            return
+                if _aider_low_uniqueness(normalized_lines):
+                    trip(
+                        f"low log uniqueness: <{AIDER_UNIQUE_THRESHOLD} unique normalized "
+                        f"lines in last {AIDER_REPEAT_WINDOW}"
+                    )
+                    break
+                if _aider_has_repeating_cycle(normalized_lines):
+                    trip("repeating log cycle detected")
+                    break
+
+                edited = _extract_aider_edit_target(text)
+                if edited:
+                    edit_counts[edited] = edit_counts.get(edited, 0) + 1
+                    if edit_counts[edited] > AIDER_MAX_EDITS_PER_FILE:
+                        trip(
+                            f"file {edited!r} edited {edit_counts[edited]} times "
+                            f"(> {AIDER_MAX_EDITS_PER_FILE})"
+                        )
+                        break
+
+        async def watch_stagnation() -> None:
+            last_hash = _hash_workspace_tree(workspace)
+            last_change = time.monotonic()
+            while True:
+                await asyncio.sleep(AIDER_STAGNATION_POLL_SECONDS)
+                if abort_reason:
+                    return
+                current = _hash_workspace_tree(workspace)
+                now = time.monotonic()
+                if current != last_hash:
+                    last_hash = current
+                    last_change = now
+                    continue
+                idle = now - last_change
+                if idle > AIDER_STAGNATION_SECONDS:
+                    trip(f"workspace unchanged for {int(idle)}s")
+                    return
+
+        reader = asyncio.create_task(read_output())
+        watcher = asyncio.create_task(watch_stagnation())
+
+        async def supervise() -> None:
+            done, pending = await asyncio.wait(
+                {reader, watcher}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
         try:
-            await asyncio.wait_for(read_output(), timeout=timeout)
-            await proc.wait()
+            await asyncio.wait_for(supervise(), timeout=timeout)
         except asyncio.TimeoutError:
             stats["timed_out"] = True
             stats["finish_reason"] = "timeout"
             logger.warning("Aider timed out after %ds", timeout)
+            for task in (reader, watcher):
+                task.cancel()
+
+        if abort_reason is not None:
+            stats["error"] = f"Detected infinite loop: {abort_reason}"
+            stats["finish_reason"] = "stuck_loop"
+
+        if proc.returncode is None:
             await terminate_process_groups({pgid})
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
         
-        if proc.returncode != 0 and not stats["timed_out"]:
+        if (
+            proc.returncode not in (0, None)
+            and not stats["timed_out"]
+            and stats["finish_reason"] == "completed"
+        ):
             stats["error"] = f"aider exited with code {proc.returncode}"
             stats["finish_reason"] = "error"
 
