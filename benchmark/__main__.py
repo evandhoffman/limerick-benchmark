@@ -208,6 +208,12 @@ def main() -> None:
         help="Skip models not yet pulled instead of aborting",
     )
     run_p.add_argument(
+        "--agent",
+        choices=["react", "aider"],
+        default="react",
+        help="Agent type (default: react)",
+    )
+    run_p.add_argument(
         "--enable-hardware-metrics",
         action="store_true",
         help="Collect GPU/thermal/fan metrics via powermetrics (may prompt for sudo)",
@@ -262,6 +268,7 @@ def main() -> None:
             task_name=args.task,
             timeout=args.timeout,
             enable_hardware_metrics=args.enable_hardware_metrics,
+            agent_type=args.agent,
         )
     )
 

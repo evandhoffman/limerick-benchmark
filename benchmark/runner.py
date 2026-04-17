@@ -48,7 +48,7 @@ def _prepare_workspace(workspace: Path) -> None:
     pyproject = workspace / "pyproject.toml"
     if not pyproject.exists():
         subprocess.run(
-            ["uv", "init", ".", "--name", workspace.name.replace("_", "-")],
+            ["uv", "init", ".", "--python", "3.12", "--name", workspace.name.replace("_", "-")],
             cwd=workspace,
             check=True,
             capture_output=True,
@@ -95,11 +95,10 @@ def _task_prompt_with_workspace_note(task_prompt: str) -> str:
     """Add a stable environment note that the workspace is already prepared."""
     return (
         "Environment note:\n"
-        "- The current directory is already initialized as a uv project.\n"
-        "- Do not run `uv init`.\n"
-        "- Flask is already installed in this workspace.\n"
-        "- Do not run `uv add flask`.\n"
-        "- Create the application files and start the server with `uv run ...`.\n\n"
+        "- The current directory is already initialized as a uv project with Python 3.12.\n"
+        "- DO NOT run `uv init` or `uv add`.\n"
+        "- Flask is already installed.\n"
+        "- Just create the application files and ensure the server starts on port 8181.\n\n"
         f"{task_prompt}"
     )
 
@@ -119,6 +118,7 @@ async def _run_one(
     task_prompt: str,
     timeout: int,
     enable_hardware_metrics: bool,
+    agent_type: str = "react",
 ) -> dict[str, Any]:
     """Run the full benchmark pipeline for a single model."""
     model_id: str = model["id"]
@@ -141,6 +141,7 @@ async def _run_one(
     logger.info("=" * 60)
     logger.info("Model   : %s", model_id)
     logger.info("Provider: %s", provider)
+    logger.info("Agent   : %s", agent_type)
     logger.info("Run dir : %s", run_dir)
     logger.info("=" * 60)
 
@@ -167,6 +168,7 @@ async def _run_one(
         trace_path=run_dir / "trace.jsonl",
         token_state=token_state,
         timeout=timeout,
+        agent_type=agent_type,
     )
 
     wall_elapsed = round(time.time() - wall_start, 1)
@@ -229,17 +231,19 @@ async def run_benchmark(
     task_name: str = "limerick",
     timeout: int = TIMEOUT_SECONDS,
     enable_hardware_metrics: bool = False,
+    agent_type: str = "react",
 ) -> list[dict[str, Any]]:
     """Run all models serially. Returns list of summary dicts."""
     task_prompt = _load_task(task_name)
     RESULTS_ROOT.mkdir(exist_ok=True)
 
     logger.info(
-        "Starting benchmark: %d model(s), task=%s, timeout=%ds, hardware_metrics=%s",
+        "Starting benchmark: %d model(s), task=%s, timeout=%ds, hardware_metrics=%s, agent=%s",
         len(models),
         task_name,
         timeout,
         enable_hardware_metrics,
+        agent_type,
     )
 
     summaries = []
@@ -250,6 +254,7 @@ async def run_benchmark(
             task_prompt,
             timeout,
             enable_hardware_metrics=enable_hardware_metrics,
+            agent_type=agent_type,
         )
         summaries.append(summary)
 

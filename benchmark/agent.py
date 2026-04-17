@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import shlex
+import sys
 import tomllib
 import types
 from datetime import datetime, timezone
@@ -267,7 +268,140 @@ def _ts() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _run_aider(
+    *,
+    model_id: str,
+    provider: str,
+    task_prompt: str,
+    workspace: Path,
+    trace_path: Path,
+    token_state: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any]:
+    """
+    Run aider-chat in headless mode for the task.
+    """
+    if provider == "ollama":
+        # Aider uses ollama/ prefix but LiteLLM-style names work via ollama_chat/
+        aider_model = f"ollama_chat/{model_id}"
+    else:
+        aider_model = model_id
+
+    # Aider likes to have a git repo, but we don't want it to commit.
+    # We use --yes-always to avoid prompts.
+    cmd = [
+        "uv", "run", "aider",
+        "--model", aider_model,
+        "--message", task_prompt,
+        "--yes-always",
+        "--no-auto-commits",
+        "--no-git",
+        "--no-suggest-shell-commands",
+        "--no-check-update",
+        "--exit",
+    ]
+
+    env = sanitized_subprocess_env()
+    if provider == "ollama":
+        env["OLLAMA_API_BASE"] = "http://localhost:11434"
+
+    stats: dict[str, Any] = {
+        "finish_reason": "completed",
+        "timed_out": False,
+        "error": None,
+    }
+
+    trace: list[dict] = []
+    def append_trace(entry: dict) -> None:
+        entry["ts"] = _ts()
+        trace.append(entry)
+        with open(trace_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    logger.info("Starting aider with model %s", aider_model)
+    append_trace({"type": "agent_start", "model": aider_model, "agent_type": "aider"})
+
+    pgid: int | None = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=workspace,
+            env=env,
+            start_new_session=True,
+        )
+        pgid = proc.pid
+
+        # Aider doesn't give us token counts easily via CLI.
+        # We just capture the log.
+        async def read_output():
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    print(f"[aider] {text}", flush=True)
+                    append_trace({"type": "aider_log", "content": text})
+
+        try:
+            await asyncio.wait_for(read_output(), timeout=timeout)
+            await proc.wait()
+        except asyncio.TimeoutError:
+            stats["timed_out"] = True
+            stats["finish_reason"] = "timeout"
+            logger.warning("Aider timed out after %ds", timeout)
+            await terminate_process_groups({pgid})
+        
+        if proc.returncode != 0 and not stats["timed_out"]:
+            stats["error"] = f"aider exited with code {proc.returncode}"
+            stats["finish_reason"] = "error"
+
+    except Exception as exc:
+        stats["error"] = str(exc)
+        stats["finish_reason"] = "error"
+        logger.error("Aider error: %s", exc, exc_info=True)
+        if pgid:
+            await terminate_process_groups({pgid})
+    
+    append_trace({"type": "agent_end", "stats": stats})
+    return stats
+
+
 async def run_agent(
+    *,
+    model_id: str,
+    provider: str,
+    task_prompt: str,
+    workspace: Path,
+    trace_path: Path,
+    token_state: dict[str, Any],
+    timeout: int = TIMEOUT_SECONDS,
+    agent_type: str = "react",
+) -> dict[str, Any]:
+    if agent_type == "aider":
+        return await _run_aider(
+            model_id=model_id,
+            provider=provider,
+            task_prompt=task_prompt,
+            workspace=workspace,
+            trace_path=trace_path,
+            token_state=token_state,
+            timeout=timeout,
+        )
+    return await _run_react(
+        model_id=model_id,
+        provider=provider,
+        task_prompt=task_prompt,
+        workspace=workspace,
+        trace_path=trace_path,
+        token_state=token_state,
+        timeout=timeout,
+    )
+
+
+async def _run_react(
     *,
     model_id: str,
     provider: str,
