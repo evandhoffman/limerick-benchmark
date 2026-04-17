@@ -167,11 +167,35 @@ def _classify_failure(summary: dict[str, Any]) -> str:
 def _should_evaluate(agent_stats: dict[str, Any]) -> bool:
     """Return True when post-run evaluation can still produce meaningful data."""
     finish_reason = agent_stats.get("finish_reason")
-    if finish_reason in {"redundant_uv_init_loop", "invalid_tool_loop", "repeated_command_loop", "repeated_file_write_loop"}:
+    if finish_reason in {
+        "redundant_uv_init_loop",
+        "invalid_tool_loop",
+        "repeated_command_loop",
+        "repeated_file_write_loop",
+        "stuck_loop",
+    }:
         return False
     if agent_stats.get("error"):
         return False
     return True
+
+
+def _normalize_agent_stats_for_eval(
+    agent_stats: dict[str, Any],
+    eval_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert late non-fatal Aider parser rejects into warnings on passing runs."""
+    normalized = dict(agent_stats)
+    if (
+        eval_result.get("passed")
+        and normalized.get("finish_reason") == "aider_edit_format_reject"
+    ):
+        warning = normalized.get("agent_stop")
+        if warning:
+            normalized["agent_warning"] = warning
+        normalized["finish_reason"] = "completed"
+        normalized["agent_stop"] = None
+    return normalized
 
 
 async def _run_one(
@@ -269,6 +293,8 @@ async def _run_one(
             "error": "evaluation_skipped",
         }
 
+    normalized_agent_stats = _normalize_agent_stats_for_eval(agent_stats, eval_result)
+
     summary = {
         "model_id": model_id,
         "provider": provider,
@@ -278,7 +304,7 @@ async def _run_one(
         "timeout_seconds": timeout,
         "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
         **token_state,
-        **agent_stats,
+        **normalized_agent_stats,
         "eval": eval_result,
     }
     summary["passed"] = bool(eval_result.get("passed"))

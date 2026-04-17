@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from benchmark.evaluator import _candidate_entry_points, _classify_http_response, _try_entry_point, evaluate
+from benchmark.evaluator import (
+    _candidate_entry_points,
+    _classify_http_response,
+    _python_file_contains_entrypoint_markers,
+    _try_entry_point,
+    evaluate,
+)
 
 
 class CandidateEntryPointTests(unittest.TestCase):
@@ -37,6 +43,23 @@ class CandidateEntryPointTests(unittest.TestCase):
             (src_dir / "server.py").write_text("from flask import Flask\napp = Flask(__name__)\n")
 
             self.assertIn("uv run python src/server.py", _candidate_entry_points(workspace))
+
+    def test_candidate_entry_points_scans_python_files_without_read_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "demo.py").write_text("from flask import Flask\n" + ("# filler\n" * 10000))
+
+            with mock.patch("pathlib.Path.read_text", side_effect=AssertionError("read_text should not be used")):
+                candidates = _candidate_entry_points(workspace)
+
+        self.assertIn("uv run python demo.py", candidates)
+
+    def test_python_file_marker_scan_stops_after_byte_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            py = Path(tmp) / "demo.py"
+            py.write_text(("# filler\n" * 9000) + "app.run()\n")
+
+            self.assertFalse(_python_file_contains_entrypoint_markers(py))
 
 
 class EvaluatorBodyChecksTests(unittest.TestCase):

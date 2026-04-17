@@ -110,43 +110,54 @@ def listener_matches_process_groups(port: int, process_groups: Iterable[int]) ->
 
 def process_group_exists(pgid: int) -> bool:
     """Return True if the process group still exists."""
-    return bool(process_group_pids(pgid))
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def process_group_pids(pgid: int) -> set[int]:
     """Return the current PIDs in a process group."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-g", str(pgid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return set()
+
     members: set[int] = set()
-    for proc in psutil.process_iter(["pid"]):
-        pid = proc.info["pid"]
-        try:
-            if os.getpgid(pid) == pgid:
-                members.add(pid)
-        except (ProcessLookupError, PermissionError):
-            continue
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            members.add(int(line))
     return members
 
 
 async def terminate_process_group(pgid: int, grace_seconds: float = 5.0) -> None:
     """Terminate a process group and escalate to SIGKILL if needed."""
-    pids = process_group_pids(pgid)
-    if not pids:
+    if not process_group_exists(pgid):
         return
 
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            continue
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
 
     deadline = asyncio.get_running_loop().time() + grace_seconds
     while process_group_exists(pgid) and asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.1)
 
-    for pid in process_group_pids(pgid):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            continue
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        return
 
 
 async def terminate_process_groups(process_groups: Iterable[int], grace_seconds: float = 5.0) -> None:

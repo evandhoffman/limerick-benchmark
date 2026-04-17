@@ -7,6 +7,7 @@ from unittest import mock
 from benchmark.runner import (
     RESULTS_ROOT,
     _new_job_id,
+    _normalize_agent_stats_for_eval,
     _prepare_workspace,
     _run_dir,
     _run_one,
@@ -35,6 +36,33 @@ class RunnerEvaluationPolicyTests(unittest.TestCase):
 
     def test_keeps_evaluation_for_timeout(self) -> None:
         self.assertTrue(_should_evaluate({"finish_reason": "timeout", "error": None}))
+
+    def test_skips_evaluation_for_stuck_loop(self) -> None:
+        self.assertFalse(_should_evaluate({"finish_reason": "stuck_loop", "error": None}))
+
+    def test_normalizes_passing_aider_reject_into_warning(self) -> None:
+        normalized = _normalize_agent_stats_for_eval(
+            {
+                "finish_reason": "aider_edit_format_reject",
+                "agent_stop": {
+                    "category": "aider_edit_format_reject",
+                    "detail": "No filename provided before file listing",
+                },
+                "timed_out": False,
+                "error": None,
+            },
+            {"passed": True},
+        )
+
+        self.assertEqual(normalized["finish_reason"], "completed")
+        self.assertIsNone(normalized["agent_stop"])
+        self.assertEqual(
+            normalized["agent_warning"],
+            {
+                "category": "aider_edit_format_reject",
+                "detail": "No filename provided before file listing",
+            },
+        )
 
 
 class RunnerWorkspacePreparationTests(unittest.TestCase):

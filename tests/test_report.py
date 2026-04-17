@@ -121,6 +121,46 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertIn("| API calls | n/a |", markdown)
         self.assertIn("| Tool calls | n/a |", markdown)
 
+    def test_render_passing_aider_warning_without_counting_it_as_failure_finish(self) -> None:
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "20260417.165047"
+            job_dir.mkdir()
+
+            self._write_model(
+                job_dir,
+                slug="qwen3.5_35b-a3b",
+                summary={
+                    "model_id": "qwen3.5:35b-a3b",
+                    "started_at": "2026-04-17T16:50:47.000000+00:00",
+                    "wall_seconds": 88.4,
+                    "tokens_in": 5200,
+                    "tokens_out": 820,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": True,
+                    "agent_warning": {
+                        "category": "aider_edit_format_reject",
+                        "detail": "No filename provided before ``` in file listing",
+                    },
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 2048,
+                        "error": None,
+                    },
+                },
+            )
+
+            markdown = generate_markdown_report(job_dir, task_label="limerick", include_placeholders=False)
+
+        self.assertIn("| Agent warning | `aider_edit_format_reject` — No filename provided before ``` in file listing |", markdown)
+        self.assertIn("| completed | 1 |", markdown)
+        self.assertNotIn("| aider_edit_format_reject | 1 |", markdown)
+
     def test_load_job_report_infers_task_from_single_task_file_and_no_placeholders(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

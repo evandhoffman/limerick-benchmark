@@ -281,6 +281,14 @@ AIDER_MAX_EDITS_PER_FILE = 6
 AIDER_STAGNATION_SECONDS = 300
 AIDER_STAGNATION_POLL_SECONDS = 20
 AIDER_NORMALIZED_HISTORY_MAX = 400
+HASH_CHUNK_SIZE = 64 * 1024
+
+AIDER_WHOLE_EDIT_REMINDER = """Aider edit-format note:
+- You are running in Aider whole edit format mode.
+- Reply only with valid Aider whole-file edits in the required format.
+- When editing a file, put the filename on its own line immediately before the full file contents.
+- Do not include shell commands, curl output, bullet lists, explanations, or verification notes outside the edit.
+"""
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _NUMERIC_RE = re.compile(r"\b\d+(?:[.,]\d+)*\b")
@@ -395,6 +403,21 @@ def _detect_aider_terminal_issue(lines: list[str]) -> tuple[str, str] | None:
     return "aider_edit_format_reject", " | ".join(unique_details[:4])
 
 
+def _aider_task_prompt(task_prompt: str) -> str:
+    """Prepend a format reminder for Aider's whole-edit parser."""
+    return AIDER_WHOLE_EDIT_REMINDER + "\n" + task_prompt
+
+
+def _update_workspace_hash_with_file(h: Any, path: Path) -> None:
+    """Add one file's contents to the workspace hash without reading it all at once."""
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(HASH_CHUNK_SIZE)
+            if not chunk:
+                break
+            h.update(chunk)
+
+
 def _hash_workspace_tree(workspace: Path) -> str:
     """Content hash of the workspace, skipping caches and virtualenvs."""
     h = hashlib.sha256()
@@ -413,13 +436,12 @@ def _hash_workspace_tree(workspace: Path) -> str:
         if any(p.startswith(_AIDER_TREE_IGNORE_PREFIXES) for p in parts):
             continue
         try:
-            data = path.read_bytes()
+            h.update(str(rel).encode("utf-8"))
+            h.update(b"\0")
+            _update_workspace_hash_with_file(h, path)
+            h.update(b"\0")
         except OSError:
             continue
-        h.update(str(rel).encode("utf-8"))
-        h.update(b"\0")
-        h.update(hashlib.sha256(data).digest())
-        h.update(b"\0")
     return h.hexdigest()
 
 
@@ -449,7 +471,7 @@ async def _run_aider(
     cmd = [
         "uv", "run", "aider",
         "--model", aider_model,
-        "--message", task_prompt,
+        "--message", _aider_task_prompt(task_prompt),
         "--yes-always",
         "--no-auto-commits",
         "--no-git",

@@ -351,6 +351,11 @@ def _render_model_section(
         detail = agent_stop.get("detail") or ""
         rows.append(("Agent stop", f"`{agent_stop['category']}`" + (f" — {detail}" if detail else "")))
 
+    agent_warning = summary.get("agent_warning")
+    if isinstance(agent_warning, dict) and agent_warning.get("category"):
+        detail = agent_warning.get("detail") or ""
+        rows.append(("Agent warning", f"`{agent_warning['category']}`" + (f" — {detail}" if detail else "")))
+
     failure_category = summary.get("failure_category")
     if failure_category:
         rows.append(("Failure category", f"`{failure_category}`"))

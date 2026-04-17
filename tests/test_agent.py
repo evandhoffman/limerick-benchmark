@@ -6,6 +6,7 @@ from unittest import mock
 from benchmark.agent import (
     AIDER_STAGNATION_SECONDS,
     _aider_has_repeating_cycle,
+    _aider_task_prompt,
     _aider_low_uniqueness,
     _declared_dependencies,
     _contains_redundant_uv_init,
@@ -135,6 +136,12 @@ class AgentWorkspaceDetectionTests(unittest.TestCase):
 
 
 class AiderLoopDetectionTests(unittest.TestCase):
+    def test_aider_task_prompt_prepends_edit_format_reminder(self) -> None:
+        prompt = _aider_task_prompt("Build the app.")
+
+        self.assertIn("Aider whole edit format mode", prompt)
+        self.assertTrue(prompt.endswith("Build the app."))
+
     def test_normalize_strips_ansi_numbers_and_paths(self) -> None:
         line = "\x1b[31mApplied edit to /tmp/abc123/app.py at 12:34:56 (1234 tokens)\x1b[0m"
         normalized = _normalize_aider_line(line)
@@ -191,6 +198,16 @@ class AiderLoopDetectionTests(unittest.TestCase):
 
             (workspace / "app.py").write_text("print('bye')\n")
             self.assertNotEqual(h1, _hash_workspace_tree(workspace))
+
+    def test_workspace_hash_streams_files_without_path_read_bytes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "app.py").write_text("print('hello')\n" * 1000)
+
+            with mock.patch("pathlib.Path.read_bytes", side_effect=AssertionError("read_bytes should not be used")):
+                digest = _hash_workspace_tree(workspace)
+
+        self.assertTrue(digest)
 
     def test_detects_aider_edit_format_reject_from_log_stream(self) -> None:
         issue = _detect_aider_terminal_issue(

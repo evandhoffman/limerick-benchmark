@@ -5,12 +5,15 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 
 from benchmark.process_utils import (
     assert_port_available,
     listener_belongs_to_process_tree,
     listener_matches_process_groups,
     port_accepts_connections,
+    process_group_exists,
+    process_group_pids,
     sanitized_subprocess_env,
     terminate_process_group,
 )
@@ -86,3 +89,29 @@ class ProcessUtilsTests(unittest.TestCase):
         proc.wait(timeout=5)
 
         self.assertFalse(port_accepts_connections(port))
+
+    def test_process_group_exists_uses_killpg_probe(self) -> None:
+        with mock.patch("benchmark.process_utils.os.killpg") as killpg_mock:
+            self.assertTrue(process_group_exists(123))
+
+        killpg_mock.assert_called_once_with(123, 0)
+
+    def test_process_group_exists_returns_false_for_missing_group(self) -> None:
+        with mock.patch(
+            "benchmark.process_utils.os.killpg",
+            side_effect=ProcessLookupError,
+        ):
+            self.assertFalse(process_group_exists(123))
+
+    def test_process_group_pids_uses_pgrep(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["pgrep", "-g", "123"],
+            returncode=0,
+            stdout="101\n202\nnot-a-pid\n",
+            stderr="",
+        )
+
+        with mock.patch("benchmark.process_utils.subprocess.run", return_value=completed) as run_mock:
+            self.assertEqual(process_group_pids(123), {101, 202})
+
+        run_mock.assert_called_once()

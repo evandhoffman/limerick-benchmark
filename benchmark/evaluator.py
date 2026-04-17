@@ -27,6 +27,7 @@ PORT = 8181
 STARTUP_TIMEOUT = 30  # seconds to wait for server to come up
 POLL_INTERVAL = 1.0
 CANONICAL_ENTRY_POINT = "uv run python app.py"
+PYTHON_SCAN_MAX_BYTES = 64 * 1024
 
 _REFRESH_RE = re.compile(r"<meta[^>]+http-equiv\s*=\s*[\"']?refresh\b|setInterval\s*\(", re.IGNORECASE)
 _SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
@@ -109,14 +110,30 @@ def _candidate_entry_points(workspace: Path) -> list[str]:
 
         python_files = sorted(root.glob("*.py"))
         for py in python_files:
-            text = py.read_text(errors="replace")
-            if "Flask" in text or "app.run" in text:
+            if _python_file_contains_entrypoint_markers(py):
                 add(f"uv run python {py.relative_to(workspace)}")
 
         if len(python_files) == 1:
             add(f"uv run python {python_files[0].relative_to(workspace)}")
 
     return candidates
+
+
+def _python_file_contains_entrypoint_markers(py: Path) -> bool:
+    """Scan just the start of a Python file for common Flask entry-point markers."""
+    bytes_read = 0
+    try:
+        with py.open("r", errors="replace") as f:
+            while bytes_read < PYTHON_SCAN_MAX_BYTES:
+                line = f.readline(PYTHON_SCAN_MAX_BYTES - bytes_read)
+                if not line:
+                    break
+                bytes_read += len(line.encode("utf-8", errors="replace"))
+                if "Flask" in line or "app.run" in line:
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def _extract_body_text_lines(body_text: str) -> list[str]:
