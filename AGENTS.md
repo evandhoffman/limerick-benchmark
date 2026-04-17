@@ -50,22 +50,30 @@ directly** — do not create per-agent variants.
 - `ollama_utils.py`: Local Ollama model store helpers.
 - `process_utils.py`: Port ownership checks, sanitized subprocess env, and
   process-group teardown.
+- `report.py`: Generates Markdown benchmark reports from structured job
+  artifacts (summary.json, metrics.csv, job.json). It aggregates results,
+  calculates pass rates, and provides failure breakdowns.
 
 `prefetch.py` is a separate CLI (exposed as the `prefetch` project script) for
 pulling Ollama models. Benchmark inputs live in `tasks/` (Markdown files,
 currently only `limerick.md`) and `models.yaml` (the model catalog with
-`poc` / `v1` / `recommended` / `exclude` flags). `tests/` mirrors the
+`poc` / `v1` / `recommended` / `exclude` flags). `reports/` contains the
+automatically generated Markdown reports for each job. `tests/` mirrors the
 `benchmark/` modules one-for-one.
 
 Generated workspaces live **outside** the repo tree at
 `~/.limerick-benchmark/workspaces/` so `uv init` inside them cannot walk up
 and auto-register as a member of this project's `pyproject.toml`. Never move
-them back under the repo. `runner._prepare_workspace` deliberately does NOT
-run `uv init` or install any dependencies — project setup is part of what
-the benchmark measures. It only seeds task-specific data files (for the
-limerick task, `tasks/limericks.txt` is copied in as `limericks.txt`). The
-environment note prefixed to the task prompt tells the model that setup is
-its responsibility; keep that note in sync if you change the prep.
+them back under the repo. `runner._prepare_workspace` seeds task-specific
+data files (for the limerick task, `tasks/limericks.txt` is copied in as
+`limericks.txt`).
+
+For **ReAct agents** (default), it does NOT run `uv init` or install
+dependencies — project setup is part of what the benchmark measures. For
+**Aider**, it pre-bootstraps a `uv` project with `flask` installed, as Aider
+cannot run setup commands itself. The environment note prefixed to the task
+prompt tells the model what is expected; keep that note in sync if you
+change the prep.
 
 ## Build, Test, and Development Commands
 
@@ -91,6 +99,9 @@ Use `uv` for all Python workflows — never call `pip`/`python` directly.
   15-minute per-model hard limit.
 - `uv run benchmark run --set poc --enable-hardware-metrics`: Include GPU /
   thermal / fan metrics (prompts for `sudo`).
+- `uv run benchmark report --job-id 20260417.083818`: Re-generate or view a
+  Markdown report for a specific job id. Reports are automatically written
+  to `reports/results_<job_id>.md` at the end of every `run`.
 - `uv run prefetch --set recommended --dry-run`: Preview required downloads.
 - `uv run prefetch --model gemma4:e2b qwen3.5:9b`: Pull specific models.
 - `uv run python -m unittest discover tests`: Run the test suite.
@@ -111,11 +122,11 @@ bash tool activity). `rich.console` is acceptable for user-facing CLI tables
 in `__main__.py` and `prefetch.py`.
 
 ## Testing Guidelines
-
 The `tests/` directory contains `unittest` suites mirroring the `benchmark/`
 modules (`test_agent.py`, `test_runner.py`, `test_evaluator.py`,
-`test_metrics.py`, `test_process_utils.py`, `test_prefetch.py`). For any
-change, add or update a test case. Run the full suite with
+`test_metrics.py`, `test_process_utils.py`, `test_prefetch.py`,
+`test_report.py`). For any change, add or update a test case. Run the full
+...
 `uv run python -m unittest discover tests` before submitting. At minimum,
 exercise the affected CLI path with `uv run benchmark ...` or
 `uv run prefetch ...`.
