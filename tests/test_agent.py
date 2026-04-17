@@ -3,8 +3,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from benchmark.agent import (
+    _contains_redundant_uv_init,
     _format_status_line,
     _parse_tool_arguments,
+    _prepare_command,
     _summarize_command_output,
     _workspace_has_started_work,
 )
@@ -59,3 +61,30 @@ class AgentWorkspaceDetectionTests(unittest.TestCase):
             workspace = Path(tmp)
             (workspace / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n")
             self.assertTrue(_workspace_has_started_work(workspace))
+
+    def test_prepare_command_skips_redundant_uv_init(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n")
+
+            command, note = _prepare_command("uv init .\nuv add flask", workspace)
+
+        self.assertEqual(command, "uv add flask")
+        self.assertIn("skipped redundant `uv init`", note)
+
+    def test_prepare_command_returns_note_when_only_uv_init_remains(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n")
+
+            command, note = _prepare_command("uv init .", workspace)
+
+        self.assertIsNone(command)
+        self.assertIn("Do not run `uv init` again", note)
+
+    def test_detects_redundant_uv_init_only_after_initialization(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            self.assertFalse(_contains_redundant_uv_init("uv init .", workspace))
+            (workspace / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n")
+            self.assertTrue(_contains_redundant_uv_init("uv init .", workspace))

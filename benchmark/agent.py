@@ -23,6 +23,7 @@ TIMEOUT_SECONDS = 900  # 15 minutes hard limit
 CMD_TIMEOUT_SECONDS = 60  # per bash command
 MAX_OUTPUT_CHARS = 8000  # truncate long command output
 STATUS_REFRESH_SECONDS = 0.25
+MAX_REDUNDANT_UV_INIT_STREAK = 5
 
 SYSTEM_PROMPT = """\
 You are an expert Python developer. Complete the coding task by calling the bash tool.
@@ -119,13 +120,57 @@ def _workspace_has_started_work(workspace: Path) -> bool:
     return any(workspace.iterdir())
 
 
+def _contains_redundant_uv_init(command: str, workspace: Path) -> bool:
+    """Return True if the command retries `uv init` after initialization."""
+    if not (workspace / "pyproject.toml").exists():
+        return False
+    return any(line.strip().startswith("uv init") for line in command.splitlines())
+
+
+def _prepare_command(command: str, workspace: Path) -> tuple[str | None, str | None]:
+    """
+    Rewrite redundant setup commands before execution.
+
+    Returns (command_to_run, note). When command_to_run is None, the caller
+    should skip execution and return note directly as the tool output.
+    """
+    if not (workspace / "pyproject.toml").exists():
+        return command, None
+
+    lines = command.splitlines()
+    kept_lines: list[str] = []
+    removed_uv_init = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("uv init"):
+            removed_uv_init = True
+            continue
+        kept_lines.append(line)
+
+    if not removed_uv_init:
+        return command, None
+
+    note = (
+        "Project already initialized; skipped redundant `uv init`. "
+        "Do not run `uv init` again. Proceed with `uv add ...`, create files, and start the server."
+    )
+    if kept_lines:
+        return "\n".join(kept_lines), note
+    return None, note
+
+
 async def _run_bash(command: str, workspace: Path, active_process_groups: set[int]) -> str:
     logger.debug("bash: %s", command[:120])
+    command_to_run, note = _prepare_command(command, workspace)
+    if command_to_run is None:
+        return note or "(no output)"
+
     proc: asyncio.subprocess.Process | None = None
     pgid: int | None = None
     try:
         proc = await asyncio.create_subprocess_shell(
-            command,
+            command_to_run,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=workspace,
@@ -146,6 +191,8 @@ async def _run_bash(command: str, workspace: Path, active_process_groups: set[in
         if len(output) > MAX_OUTPUT_CHARS:
             half = MAX_OUTPUT_CHARS // 2
             output = output[:half] + f"\n...[{len(output) - MAX_OUTPUT_CHARS} chars truncated]...\n" + output[-half:]
+        if note:
+            output = f"{note}\n\n{output}" if output != "(no output)" else note
         if pgid is not None and not process_group_exists(pgid):
             active_process_groups.discard(pgid)
         return output or "(no output)"
@@ -199,6 +246,7 @@ async def run_agent(
     MAX_INVALID_TOOLS = 5
     active_process_groups: set[int] = set()
     agent_started_at = asyncio.get_running_loop().time()
+    redundant_uv_init_streak = 0
 
     def append_trace(entry: dict) -> None:
         entry["ts"] = _ts()
@@ -212,7 +260,7 @@ async def run_agent(
     append_trace({"type": "task", "content": task_prompt})
 
     async def _loop() -> None:
-        nonlocal nudge_count, invalid_tool_count
+        nonlocal nudge_count, invalid_tool_count, redundant_uv_init_streak
         while True:
             token_state["api_calls"] += 1
             logger.info("API call #%d to %s", token_state["api_calls"], litellm_model)
@@ -451,6 +499,26 @@ async def run_agent(
                         "content": output,
                     })
                     continue
+                if _contains_redundant_uv_init(command, workspace):
+                    redundant_uv_init_streak += 1
+                else:
+                    redundant_uv_init_streak = 0
+
+                if redundant_uv_init_streak > MAX_REDUNDANT_UV_INIT_STREAK:
+                    output = (
+                        "Error: detected a redundant `uv init` loop more than 5 times in a row. "
+                        "The project is already initialized, and this run is being aborted as stuck."
+                    )
+                    append_trace({
+                        "type": "tool_result",
+                        "call_id": tc.id,
+                        "command": command,
+                        "output": output,
+                    })
+                    logger.error("Aborting run after %d consecutive redundant uv init attempts",
+                                 redundant_uv_init_streak)
+                    stats["finish_reason"] = "redundant_uv_init_loop"
+                    return
                 print(f"$ {command}", flush=True)
                 output = await _run_bash(command, workspace, active_process_groups)
                 print(f"-> {_summarize_command_output(output)}", flush=True)
