@@ -51,7 +51,7 @@ uv run benchmark list
 uv run prefetch --set poc
 uv run prefetch --set recommended --dry-run   # preview first
 
-# Run the POC (2 smallest models — good for validating the harness)
+# Run the POC (single model used for quick harness validation)
 uv run benchmark run --set poc
 
 # Opt in to privileged Apple Silicon hardware metrics
@@ -85,14 +85,13 @@ After each run, open the result directory and run `./run.sh` to start the genera
 | `claude-sonnet-4-6` | Claude Sonnet 4.6 | Reference — better |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Reference — good |
 
-### POC models
+### POC model
 
-For initial testing of the harness, use these two — smallest in the recommended set, complete quickly:
+For initial testing of the harness, use this one model while debugging the benchmark loop:
 
 | Model ID | Size | Why |
 |---|---|---|
-| `qwen3.5:9b` | 6.6 GB | Smallest Qwen with real coding ability |
-| `gemma4:e2b` | 7.2 GB | Smallest Gemma 4 IT variant |
+| `gemma4:e2b` | 7.2 GB | Current POC target while debugging the `ollama_chat/gemma4:e2b` run behavior |
 
 ### Recommended benchmark set (top 10)
 
