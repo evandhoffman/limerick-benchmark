@@ -1,14 +1,17 @@
 # limerick-benchmark
 
-A benchmark suite for evaluating LLM coding ability on local Apple Silicon hardware. Each model gets a coding task, a `bash` tool, and a hard 15-minute timebox to produce a working result — no hints, no hand-holding.
+A benchmark suite for evaluating LLM coding ability on local Apple Silicon hardware. Each model gets a coding task, a tool to act on a workspace, and a hard 15-minute timebox to produce a working result — no hints, no hand-holding.
 
 ## How it works
 
-1. The runner starts a fresh agent session for each model, serially (never two at once, so GPU is never contested)
-2. The agent receives the task prompt and can call a `bash` tool to create files, install packages, run the server, read output, and fix errors — just like a developer at a terminal
-3. The run is **hard-killed after 15 minutes** if not complete
-4. System metrics (CPU, memory, token counts, and optionally GPU/thermal/fan data) are sampled every 5 seconds throughout the run
-5. After the run, you manually evaluate by running `./run.sh` in the result directory
+1. The runner starts a fresh agent session for each model, serially (never two at once, so the GPU is never contested).
+2. The workspace is pre-initialized as a `uv` project on Python 3.12 with Flask already installed, and lives **outside** the repo at `~/.limerick-benchmark/workspaces/<timestamp>_<slug>/`. The task prompt is prefixed with an environment note telling the model to skip `uv init` / `uv add`.
+3. One of two agent backends drives the run:
+   - **ReAct (default)** — `litellm` + a single `bash` tool. Loop-detection guards abort on repeated commands, redundant `uv init`, or the same file being overwritten in a tight loop.
+   - **Aider (`--agent aider`)** — the Aider CLI in headless mode, wrapped with log-repeat detection, per-file edit caps, and a workspace-hash stagnation watch that kills the run if the tree is unchanged for 180 seconds.
+4. The run is **hard-killed after 15 minutes** by default (override with `--timeout`).
+5. System metrics (CPU, memory, token counts, and optionally GPU / thermal / fan data) are sampled every 5 seconds throughout the run.
+6. After the run, the evaluator auto-discovers entry points (`run.sh`, `[project.scripts]`, `app.py` / `main.py` / `server.py` / `web.py`, Flask-containing `.py` files, and `python -m <pkg>`), starts the server, and checks for HTTP 200 on port 8181. A convenience `run.sh` is written to the results directory for manual re-evaluation.
 
 ## Current task: Limerick Generator
 
@@ -30,6 +33,8 @@ The first two checks are automated pass/fail gates — if the server doesn't sta
 
 **Reference**: Claude Opus 4.7 = 100 points. All other scores are relative.
 
+See [`results_20260417_073034.md`](results_20260417_073034.md) for an example multi-model scoring writeup.
+
 ## Prerequisites
 
 - macOS with Apple Silicon (developed on M5 Max, 64 GB)
@@ -50,6 +55,7 @@ uv run benchmark list
 # Prefetch models you don't have yet
 uv run prefetch --set poc
 uv run prefetch --set recommended --dry-run   # preview first
+uv run prefetch --model gemma4:e2b qwen3.5:9b # pull specific models
 
 # Run the POC (single model used for quick harness validation)
 uv run benchmark run --set poc
@@ -66,14 +72,46 @@ uv run benchmark run --set recommended
 # Run a single model
 uv run benchmark run --model gemma4:e2b
 
-# Run Anthropic reference models only
+# Run multiple explicit models
+uv run benchmark run --model gemma4:e2b qwen3.5:9b
+
+# Run Anthropic reference models only (requires ANTHROPIC_API_KEY)
 uv run benchmark run --set reference
+
+# Use the Aider backend instead of the default ReAct loop
+uv run benchmark run --set poc --agent aider
+
+# Override the default 15-minute per-model hard limit
+uv run benchmark run --set poc --timeout 600
 
 # Skip models that aren't pulled instead of aborting
 uv run benchmark run --set recommended --skip-missing
 ```
 
 After each run, open the result directory and run `./run.sh` to start the generated server, then browse to http://localhost:8181 to evaluate manually.
+
+## CLI flags
+
+### `uv run benchmark run`
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--set {poc,v1,recommended,local,reference}` | — | Named model set. `local` = whatever is already pulled; `reference` = Anthropic cloud models. Mutually exclusive with `--model`. |
+| `--model MODEL_ID [MODEL_ID …]` | — | One or more specific model IDs. Unknown IDs are treated as Ollama models. Mutually exclusive with `--set`. |
+| `--task NAME` | `limerick` | Task file name (without `.md`) in `tasks/`. |
+| `--timeout SECONDS` | 900 | Per-model hard limit. |
+| `--agent {react,aider}` | `react` | Agent backend. |
+| `--skip-missing` | off | Skip Ollama models that aren't pulled instead of aborting the run plan. |
+| `--enable-hardware-metrics` | off | Collect GPU / thermal / fan metrics via `powermetrics` (prompts for `sudo`). |
+
+### `uv run prefetch`
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--set {poc,v1,recommended,all}` | — | Named model set. Mutually exclusive with `--model`. |
+| `--model MODEL_ID [MODEL_ID …]` | — | Specific model IDs to pull. |
+| `--dry-run` | off | Show the plan without downloading. |
+| `--yes` / `-y` | off | Skip the confirmation prompt. |
 
 ## Model sets
 
@@ -125,7 +163,7 @@ results/
     └── summary.json      ← run stats (tokens, timing, eval result)
 ```
 
-Workspaces are kept outside the repo tree so that `uv init` inside them cannot auto-register as a parent workspace member in this project's `pyproject.toml`.
+Workspaces are kept outside the repo tree so that `uv init` inside them cannot auto-register as a parent workspace member in this project's `pyproject.toml`. They are pre-initialized with Python 3.12 and Flask before the agent starts.
 
 ## metrics.csv columns
 
@@ -149,8 +187,21 @@ GPU/thermal/fan columns are populated only when `--enable-hardware-metrics` is p
 yourusername ALL=(ALL) NOPASSWD: /usr/bin/powermetrics
 ```
 
+## Loop detection
+
+Both agent backends abort early if they get stuck, so a stalled model doesn't burn the full 15-minute budget:
+
+- **ReAct** — aborts on 5 consecutive identical commands, 5 consecutive redundant `uv init` attempts, 3+ consecutive rewrites of the same file, or 5 malformed / unknown tool calls. The `finish_reason` in `summary.json` records which guard tripped.
+- **Aider** — aborts on low log-line uniqueness over a rolling window, a detectable repeating log cycle, any single file being edited more than `AIDER_MAX_EDITS_PER_FILE` times, or the workspace tree hash not changing for 180 seconds. Aider stdout is prefixed with `[N/total:model-id:agent]` so multi-model runs stay grep-friendly.
+
+When either guard trips, the run is recorded with `finish_reason: stuck_loop` and the post-run HTTP evaluation is skipped.
+
 ## Hardware
 
-Benchmarks are run serially to avoid GPU contention. One model runs at a time. Results include thermal data so you can see if earlier runs affect later ones (thermal throttling).
+Benchmarks are run serially to avoid GPU contention. One model runs at a time. Results include thermal data (when `--enable-hardware-metrics` is on) so you can see if earlier runs affect later ones (thermal throttling).
 
 Tested on: Apple M5 Max, 64 GB unified memory, macOS Sequoia.
+
+## Agent-facing docs
+
+`AGENTS.md` is the single source of coding guidelines for any agent working in this repo. `CLAUDE.md` and `GEMINI.md` are symlinks to it, so Claude Code, Codex, Gemini, and Aider all read the same file. Edit `AGENTS.md` directly — do not create per-agent variants.
