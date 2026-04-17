@@ -31,7 +31,8 @@ directly** — do not create per-agent variants.
     - tail-cycle detection (`_aider_has_repeating_cycle`),
     - per-file edit cap (`AIDER_MAX_EDITS_PER_FILE`),
     - workspace-hash stagnation watch (abort if the workspace tree is
-      unchanged for `AIDER_STAGNATION_SECONDS`, currently 180 s).
+      unchanged for `AIDER_STAGNATION_SECONDS`, currently 300 s by default
+      and configurable via `--aider-stagnation-timeout`).
     Every stdout line is printed with the `run_label` prefix so multi-model
     runs remain grep-friendly.
 - `evaluator.py`: Starts the generated app and validates it against the task
@@ -81,6 +82,8 @@ Use `uv` for all Python workflows — never call `pip`/`python` directly.
   models.
 - `uv run benchmark run --set poc --agent aider`: Use the Aider backend
   instead of the default ReAct loop.
+- `uv run benchmark run --set poc --agent aider --aider-stagnation-timeout 420`:
+  Override the Aider workspace-stagnation watchdog.
 - `uv run benchmark run --set poc --timeout 600`: Override the default
   15-minute per-model hard limit.
 - `uv run benchmark run --set poc --enable-hardware-metrics`: Include GPU /

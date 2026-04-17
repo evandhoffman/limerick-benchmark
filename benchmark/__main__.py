@@ -6,6 +6,7 @@ Usage:
     uv run python -m benchmark run --set {poc,v1,recommended,local,reference}
     uv run python -m benchmark run --model gemma4:e2b
     uv run python -m benchmark run --set poc --timeout 300
+    uv run python -m benchmark run --set poc --agent aider --aider-stagnation-timeout 420
     uv run python -m benchmark report --job-id 20260417.083818
 """
 
@@ -19,7 +20,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from .agent import TIMEOUT_SECONDS
+from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS
 from .ollama_utils import get_local_models, get_pulled_names
 from .report import generate_markdown_report, resolve_job_dir
 from .runner import run_benchmark
@@ -205,6 +206,15 @@ def main() -> None:
         help=f"Per-model timeout in seconds (default: {TIMEOUT_SECONDS})",
     )
     run_p.add_argument(
+        "--aider-stagnation-timeout",
+        type=int,
+        default=AIDER_STAGNATION_SECONDS,
+        help=(
+            "Abort an aider run if the workspace stays unchanged for this many "
+            f"seconds (default: {AIDER_STAGNATION_SECONDS})"
+        ),
+    )
+    run_p.add_argument(
         "--skip-missing",
         action="store_true",
         help="Skip models not yet pulled instead of aborting",
@@ -313,6 +323,7 @@ def main() -> None:
             models,
             task_name=args.task,
             timeout=args.timeout,
+            aider_stagnation_timeout=args.aider_stagnation_timeout,
             enable_hardware_metrics=args.enable_hardware_metrics,
             agent_type=args.agent,
         )

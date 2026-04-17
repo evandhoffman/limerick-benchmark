@@ -194,6 +194,10 @@ def _render_model_section(
         ("Tool calls", str(summary.get("tool_calls", 0))),
     ]
 
+    aider_stagnation_timeout = summary.get("aider_stagnation_timeout_seconds")
+    if aider_stagnation_timeout is not None:
+        rows.append(("Aider stagnation timeout", f"{aider_stagnation_timeout} s"))
+
     if summary.get("error"):
         rows.append(("Agent error", str(summary["error"])))
 

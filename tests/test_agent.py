@@ -1,8 +1,10 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from benchmark.agent import (
+    AIDER_STAGNATION_SECONDS,
     _aider_has_repeating_cycle,
     _aider_low_uniqueness,
     _declared_dependencies,
@@ -14,6 +16,7 @@ from benchmark.agent import (
     _normalize_dependency_name,
     _parse_tool_arguments,
     _prepare_command,
+    run_agent,
     _summarize_command_output,
     _workspace_has_started_work,
     _written_file_target,
@@ -186,3 +189,57 @@ class AiderLoopDetectionTests(unittest.TestCase):
 
             (workspace / "app.py").write_text("print('bye')\n")
             self.assertNotEqual(h1, _hash_workspace_tree(workspace))
+
+
+class AiderConfigurationTests(unittest.TestCase):
+    def test_default_stagnation_timeout_is_300_seconds(self) -> None:
+        self.assertEqual(AIDER_STAGNATION_SECONDS, 300)
+
+
+class RunAgentDispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_aider_path_receives_stagnation_timeout(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            trace_path = workspace / "trace.jsonl"
+            with mock.patch(
+                "benchmark.agent._run_aider",
+                new=mock.AsyncMock(return_value={"finish_reason": "completed"}),
+            ) as aider_mock:
+                result = await run_agent(
+                    model_id="qwen3.5:9b",
+                    provider="ollama",
+                    task_prompt="Build the app",
+                    workspace=workspace,
+                    trace_path=trace_path,
+                    token_state={},
+                    timeout=900,
+                    aider_stagnation_timeout=420,
+                    agent_type="aider",
+                    run_label="1/1:qwen3.5-9b:aider",
+                )
+
+        self.assertEqual(result, {"finish_reason": "completed"})
+        self.assertEqual(
+            aider_mock.await_args.kwargs["aider_stagnation_timeout"],
+            420,
+        )
+
+    async def test_react_path_accepts_default_aider_stagnation_timeout(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            trace_path = workspace / "trace.jsonl"
+            with mock.patch(
+                "benchmark.agent._run_react",
+                new=mock.AsyncMock(return_value={"finish_reason": "completed"}),
+            ) as react_mock:
+                await run_agent(
+                    model_id="qwen3.5:9b",
+                    provider="ollama",
+                    task_prompt="Build the app",
+                    workspace=workspace,
+                    trace_path=trace_path,
+                    token_state={},
+                    agent_type="react",
+                )
+
+        self.assertEqual(react_mock.await_args.kwargs["timeout"], 900)

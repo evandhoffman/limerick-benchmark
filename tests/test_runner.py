@@ -12,6 +12,7 @@ from benchmark.runner import (
     _slug,
     _task_prompt_with_workspace_note,
     _workspace_has_dependency,
+    run_benchmark,
 )
 
 
@@ -110,3 +111,30 @@ class RunnerWorkspacePreparationTests(unittest.TestCase):
 
             self.assertTrue(_workspace_has_dependency(workspace, "flask"))
             self.assertFalse(_workspace_has_dependency(workspace, "rich"))
+
+
+class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_benchmark_passes_aider_stagnation_timeout_to_each_run(self) -> None:
+        model = {"id": "qwen3.5:9b", "provider": "ollama"}
+        with TemporaryDirectory() as tmp:
+            results_root = Path(tmp) / "results"
+            with (
+                mock.patch("benchmark.runner.RESULTS_ROOT", results_root),
+                mock.patch("benchmark.runner._load_task", return_value="Build the app"),
+                mock.patch("benchmark.runner._new_job_id", return_value="20260417.083818"),
+                mock.patch(
+                    "benchmark.runner._run_one",
+                    new=mock.AsyncMock(return_value={"model_id": model["id"]}),
+                ) as run_one_mock,
+            ):
+                summaries = await run_benchmark(
+                    [model],
+                    agent_type="aider",
+                    aider_stagnation_timeout=420,
+                )
+
+        self.assertEqual(summaries, [{"model_id": model["id"]}])
+        self.assertEqual(
+            run_one_mock.await_args.kwargs["aider_stagnation_timeout"],
+            420,
+        )

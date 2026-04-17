@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .agent import run_agent, TIMEOUT_SECONDS
+from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS, run_agent
 from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
 from .process_utils import assert_port_available, sanitized_subprocess_env
@@ -122,6 +122,7 @@ async def _run_one(
     model: dict[str, Any],
     task_prompt: str,
     timeout: int,
+    aider_stagnation_timeout: int,
     enable_hardware_metrics: bool,
     job_id: str,
     agent_type: str = "react",
@@ -176,6 +177,7 @@ async def _run_one(
         trace_path=run_dir / "trace.jsonl",
         token_state=token_state,
         timeout=timeout,
+        aider_stagnation_timeout=aider_stagnation_timeout,
         agent_type=agent_type,
         run_label=run_label,
     )
@@ -205,6 +207,7 @@ async def _run_one(
         "started_at": datetime.now(timezone.utc).isoformat(),
         "wall_seconds": wall_elapsed,
         "timeout_seconds": timeout,
+        "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
         **token_state,
         **agent_stats,
         "eval": eval_result,
@@ -239,6 +242,7 @@ async def run_benchmark(
     models: list[dict[str, Any]],
     task_name: str = "limerick",
     timeout: int = TIMEOUT_SECONDS,
+    aider_stagnation_timeout: int = AIDER_STAGNATION_SECONDS,
     enable_hardware_metrics: bool = False,
     agent_type: str = "react",
 ) -> list[dict[str, Any]]:
@@ -251,11 +255,12 @@ async def run_benchmark(
     job_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Starting benchmark job %s: %d model(s), task=%s, timeout=%ds, hardware_metrics=%s, agent=%s",
+        "Starting benchmark job %s: %d model(s), task=%s, timeout=%ds, aider_stagnation_timeout=%ds, hardware_metrics=%s, agent=%s",
         job_id,
         len(models),
         task_name,
         timeout,
+        aider_stagnation_timeout,
         enable_hardware_metrics,
         agent_type,
     )
@@ -271,6 +276,7 @@ async def run_benchmark(
             model,
             task_prompt,
             timeout,
+            aider_stagnation_timeout=aider_stagnation_timeout,
             enable_hardware_metrics=enable_hardware_metrics,
             job_id=job_id,
             agent_type=agent_type,

@@ -278,7 +278,7 @@ AIDER_CYCLE_MIN_PERIOD = 2
 AIDER_CYCLE_MAX_PERIOD = 20
 AIDER_CYCLE_MIN_REPEATS = 3
 AIDER_MAX_EDITS_PER_FILE = 6
-AIDER_STAGNATION_SECONDS = 180
+AIDER_STAGNATION_SECONDS = 300
 AIDER_STAGNATION_POLL_SECONDS = 20
 AIDER_NORMALIZED_HISTORY_MAX = 400
 
@@ -383,6 +383,7 @@ async def _run_aider(
     trace_path: Path,
     token_state: dict[str, Any],
     timeout: int,
+    aider_stagnation_timeout: int = AIDER_STAGNATION_SECONDS,
     run_label: str = "aider",
 ) -> dict[str, Any]:
     """
@@ -426,7 +427,14 @@ async def _run_aider(
             f.write(json.dumps(entry) + "\n")
 
     logger.info("Starting aider with model %s", aider_model)
-    append_trace({"type": "agent_start", "model": aider_model, "agent_type": "aider"})
+    append_trace(
+        {
+            "type": "agent_start",
+            "model": aider_model,
+            "agent_type": "aider",
+            "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
+        }
+    )
 
     pgid: int | None = None
     try:
@@ -503,7 +511,7 @@ async def _run_aider(
                     last_change = now
                     continue
                 idle = now - last_change
-                if idle > AIDER_STAGNATION_SECONDS:
+                if idle > aider_stagnation_timeout:
                     trip(f"workspace unchanged for {int(idle)}s")
                     return
 
@@ -571,6 +579,7 @@ async def run_agent(
     trace_path: Path,
     token_state: dict[str, Any],
     timeout: int = TIMEOUT_SECONDS,
+    aider_stagnation_timeout: int = AIDER_STAGNATION_SECONDS,
     agent_type: str = "react",
     run_label: str = "aider",
 ) -> dict[str, Any]:
@@ -583,6 +592,7 @@ async def run_agent(
             trace_path=trace_path,
             token_state=token_state,
             timeout=timeout,
+            aider_stagnation_timeout=aider_stagnation_timeout,
             run_label=run_label,
         )
     return await _run_react(
