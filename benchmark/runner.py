@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 import time
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,12 +44,23 @@ def _load_task(task_name: str) -> str:
 
 
 def _prepare_workspace(workspace: Path) -> None:
-    """Initialize the workspace as a uv project before handing it to the model."""
-    if (workspace / "pyproject.toml").exists():
+    """Initialize the workspace as a uv project with Flask preinstalled."""
+    pyproject = workspace / "pyproject.toml"
+    if not pyproject.exists():
+        subprocess.run(
+            ["uv", "init", ".", "--name", workspace.name.replace("_", "-")],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            env=sanitized_subprocess_env(),
+            text=True,
+        )
+
+    if _workspace_has_dependency(workspace, "flask"):
         return
 
     subprocess.run(
-        ["uv", "init", ".", "--name", workspace.name.replace("_", "-")],
+        ["uv", "add", "flask"],
         cwd=workspace,
         check=True,
         capture_output=True,
@@ -57,13 +69,37 @@ def _prepare_workspace(workspace: Path) -> None:
     )
 
 
+def _workspace_has_dependency(workspace: Path, dependency_name: str) -> bool:
+    """Return True if the pyproject already declares the dependency."""
+    pyproject = workspace / "pyproject.toml"
+    if not pyproject.exists():
+        return False
+
+    try:
+        data = tomllib.loads(pyproject.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+
+    normalized = dependency_name.lower().replace("_", "-")
+    for spec in data.get("project", {}).get("dependencies", []) or []:
+        token = spec.split(";")[0].strip()
+        for marker in ("[", "=", "<", ">", "!", "~"):
+            if marker in token:
+                token = token.split(marker, 1)[0]
+        if token.strip().lower().replace("_", "-") == normalized:
+            return True
+    return False
+
+
 def _task_prompt_with_workspace_note(task_prompt: str) -> str:
-    """Add a stable environment note that the workspace is already initialized."""
+    """Add a stable environment note that the workspace is already prepared."""
     return (
         "Environment note:\n"
         "- The current directory is already initialized as a uv project.\n"
         "- Do not run `uv init`.\n"
-        "- Use `uv add ...`, create the application files, and start the server with `uv run ...`.\n\n"
+        "- Flask is already installed in this workspace.\n"
+        "- Do not run `uv add flask`.\n"
+        "- Create the application files and start the server with `uv run ...`.\n\n"
         f"{task_prompt}"
     )
 
