@@ -12,6 +12,13 @@ from typing import Iterable
 import psutil
 
 
+def sanitized_subprocess_env() -> dict[str, str]:
+    """Return an environment suitable for isolated benchmark subprocesses."""
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    return env
+
+
 def listening_pids(port: int) -> set[int]:
     """Return PIDs of processes listening on the given TCP port."""
     pids: set[int] = set()

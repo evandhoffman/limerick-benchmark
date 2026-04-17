@@ -11,6 +11,7 @@ from benchmark.process_utils import (
     listener_belongs_to_process_tree,
     listener_matches_process_groups,
     port_accepts_connections,
+    sanitized_subprocess_env,
     terminate_process_group,
 )
 
@@ -31,6 +32,19 @@ def _wait_for_listener(port: int, timeout: float = 5.0) -> None:
 
 
 class ProcessUtilsTests(unittest.TestCase):
+    def test_sanitized_subprocess_env_removes_virtual_env(self) -> None:
+        original = os.environ.get("VIRTUAL_ENV")
+        os.environ["VIRTUAL_ENV"] = "/tmp/example-venv"
+        try:
+            env = sanitized_subprocess_env()
+        finally:
+            if original is None:
+                os.environ.pop("VIRTUAL_ENV", None)
+            else:
+                os.environ["VIRTUAL_ENV"] = original
+
+        self.assertNotIn("VIRTUAL_ENV", env)
+
     def _spawn_listener(self, port: int) -> subprocess.Popen[str]:
         proc = subprocess.Popen(
             [

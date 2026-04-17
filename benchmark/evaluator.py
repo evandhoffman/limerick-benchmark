@@ -15,6 +15,7 @@ import aiohttp
 from .process_utils import (
     assert_port_available,
     listener_belongs_to_process_tree,
+    sanitized_subprocess_env,
     terminate_process_group,
 )
 
@@ -120,6 +121,7 @@ async def _try_entry_point(workspace: Path, entry_cmd: str) -> dict[str, Any]:
         cwd=workspace,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
+        env=sanitized_subprocess_env(),
         start_new_session=True,
     )
 

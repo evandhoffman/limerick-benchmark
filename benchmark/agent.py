@@ -14,6 +14,7 @@ from .process_utils import (
     listener_matches_process_groups,
     port_accepts_connections,
     process_group_exists,
+    sanitized_subprocess_env,
     terminate_process_groups,
 )
 
@@ -175,6 +176,7 @@ async def _run_bash(command: str, workspace: Path, active_process_groups: set[in
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=workspace,
+            env=sanitized_subprocess_env(),
             start_new_session=True,
         )
         pgid = proc.pid

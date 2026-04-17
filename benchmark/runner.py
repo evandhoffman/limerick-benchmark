@@ -13,7 +13,7 @@ from typing import Any
 from .agent import run_agent, TIMEOUT_SECONDS
 from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
-from .process_utils import assert_port_available
+from .process_utils import assert_port_available, sanitized_subprocess_env
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ def _prepare_workspace(workspace: Path) -> None:
         cwd=workspace,
         check=True,
         capture_output=True,
+        env=sanitized_subprocess_env(),
         text=True,
     )
 
