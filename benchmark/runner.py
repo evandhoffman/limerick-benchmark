@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS, run_agent
 from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
-from .process_utils import assert_port_available
+from .process_utils import assert_port_available, sanitized_subprocess_env
 from .report import write_markdown_report
 
 logger = logging.getLogger(__name__)
@@ -47,14 +48,53 @@ def _load_task(task_name: str) -> str:
     return path.read_text()
 
 
-def _prepare_workspace(workspace: Path, task_name: str | None = None) -> None:
-    """Seed the workspace with task resources only.
+def _prepare_workspace(
+    workspace: Path,
+    task_name: str | None = None,
+    *,
+    agent_type: str = "react",
+) -> None:
+    """Seed the workspace with task resources and, for file-only agents,
+    the project scaffold.
 
-    The model is responsible for installing its own dependencies
-    (e.g. running `uv init` / `uv add flask` or `pip install flask`).
+    ReAct agents have a bash tool and are expected to run setup themselves
+    (`uv init`, `uv add flask`, etc.) — that is part of what the benchmark
+    measures for those agents. Aider runs in headless `--exit` mode with no
+    shell execution, so it can only edit files; for Aider we pre-create a
+    uv project with Flask installed, otherwise every run would fail with
+    `ModuleNotFoundError: flask`.
     """
     if task_name:
         _seed_task_resources(workspace, task_name)
+
+    if agent_type == "aider":
+        _bootstrap_uv_project_with_flask(workspace)
+
+
+def _bootstrap_uv_project_with_flask(workspace: Path) -> None:
+    """Run `uv init` and `uv add flask` in the workspace."""
+    if not (workspace / "pyproject.toml").exists():
+        subprocess.run(
+            ["uv", "init", ".", "--python", "3.12", "--name", workspace.name.replace("_", "-")],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            env=sanitized_subprocess_env(),
+            text=True,
+        )
+        # Drop the stock main.py uv creates so it can't shadow app.py at eval.
+        stock_main = workspace / "main.py"
+        if stock_main.exists():
+            stock_main.unlink()
+
+    subprocess.run(
+        ["uv", "add", "flask"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        env=sanitized_subprocess_env(),
+        text=True,
+    )
 
 
 def _seed_task_resources(workspace: Path, task_name: str) -> None:
@@ -65,23 +105,39 @@ def _seed_task_resources(workspace: Path, task_name: str) -> None:
             (workspace / "limericks.txt").write_bytes(src.read_bytes())
 
 
-def _task_prompt_with_workspace_note(task_prompt: str, *, task_name: str | None = None) -> str:
+def _task_prompt_with_workspace_note(
+    task_prompt: str,
+    *,
+    task_name: str | None = None,
+    agent_type: str = "react",
+) -> str:
     """Add a stable environment note describing the workspace state."""
-    notes = [
-        "- The current directory is empty except for any task data files listed below.",
-        "- Python 3.12 and `uv` are available on PATH. You are responsible for setting "
-        "up the project (e.g. `uv init . && uv add flask`, or `pip install flask` in a "
-        "venv — your choice).",
-        "- Create `app.py` as the entry point; do not leave a stock `main.py` behind.",
-    ]
+    notes: list[str] = []
+    if agent_type == "aider":
+        notes.extend(
+            [
+                "- The current directory is already a uv project (Python 3.12) with Flask installed.",
+                "- Do not run `uv init` or `uv add flask` — they are already done.",
+                "- Create `app.py` as the entry point. Do not create a `main.py`.",
+            ]
+        )
+    else:
+        notes.extend(
+            [
+                "- The current directory is empty except for any task data files listed below.",
+                "- Python 3.12 and `uv` are available on PATH. Setting up the project "
+                "(`uv init . && uv add flask`, or `pip install flask` in a venv) is your job.",
+                "- Create `app.py` as the entry point; do not leave a stock `main.py` behind.",
+            ]
+        )
     if task_name == "limerick":
         notes.append(
             "- A file `limericks.txt` with 20 pre-written limericks is already in "
             "this directory. Read from it instead of generating limericks in your reply."
         )
     notes.append(
-        "- Write code and run shell commands. Do NOT output limericks, poems, or long literal "
-        "data in your chat replies — put data in files."
+        "- Write code (and run shell commands if you have that tool). Do NOT output limericks, "
+        "poems, or long literal data in your chat replies — put data in files."
     )
     return "Environment note:\n" + "\n".join(notes) + "\n\n" + task_prompt
 
@@ -143,7 +199,7 @@ async def _run_one(
     # Nested under the job id so per-job cleanup is one `rm -rf`.
     workspace = WORKSPACE_BASE / job_id / _slug(model_id)
     workspace.mkdir(parents=True)
-    _prepare_workspace(workspace, task_name=task_name)
+    _prepare_workspace(workspace, task_name=task_name, agent_type=agent_type)
 
     # Symlink for convenience so results dir is self-contained for browsing
     (run_dir / "workspace").symlink_to(workspace)
@@ -155,12 +211,20 @@ async def _run_one(
     logger.info("Run dir : %s", run_dir)
     logger.info("=" * 60)
 
-    token_state: dict[str, Any] = {
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "api_calls": 0,
-        "tool_calls": 0,
-    }
+    if agent_type == "aider":
+        token_state: dict[str, Any] = {
+            "tokens_in": None,
+            "tokens_out": None,
+            "api_calls": None,
+            "tool_calls": None,
+        }
+    else:
+        token_state = {
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "api_calls": 0,
+            "tool_calls": 0,
+        }
 
     collector = MetricsCollector(
         run_dir / "metrics.csv",
@@ -173,7 +237,7 @@ async def _run_one(
     agent_stats = await run_agent(
         model_id=model_id,
         provider=provider,
-        task_prompt=_task_prompt_with_workspace_note(task_prompt, task_name=task_name),
+        task_prompt=_task_prompt_with_workspace_note(task_prompt, task_name=task_name, agent_type=agent_type),
         workspace=workspace,
         trace_path=run_dir / "trace.jsonl",
         token_state=token_state,
@@ -195,9 +259,13 @@ async def _run_one(
         eval_result = {
             "entry_point": None,
             "entry_point_candidates": [],
+            "entry_point_mismatch": False,
             "server_started": False,
             "http_status": None,
             "response_bytes": None,
+            "body_has_refresh_mechanism": False,
+            "body_has_limerick_shape": False,
+            "passed": False,
             "error": "evaluation_skipped",
         }
 
@@ -213,7 +281,7 @@ async def _run_one(
         **agent_stats,
         "eval": eval_result,
     }
-    summary["passed"] = eval_result.get("http_status") == 200
+    summary["passed"] = bool(eval_result.get("passed"))
     summary["failure_category"] = None if summary["passed"] else _classify_failure(summary)
 
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
@@ -229,16 +297,22 @@ def _print_summary(s: dict[str, Any]) -> None:
     logger.info("─" * 60)
     logger.info("  Model      : %s", s["model_id"])
     logger.info("  Wall time  : %.1fs", s["wall_seconds"])
-    logger.info("  Tokens in  : %d", s["tokens_in"])
-    logger.info("  Tokens out : %d", s["tokens_out"])
-    logger.info("  API calls  : %d", s["api_calls"])
-    logger.info("  Tool calls : %d", s["tool_calls"])
+    logger.info("  Tokens in  : %s", _format_counter(s.get("tokens_in")))
+    logger.info("  Tokens out : %s", _format_counter(s.get("tokens_out")))
+    logger.info("  API calls  : %s", _format_counter(s.get("api_calls")))
+    logger.info("  Tool calls : %s", _format_counter(s.get("tool_calls")))
     logger.info("  Timed out  : %s", s.get("timed_out", False))
     logger.info("  Server up  : %s", started)
     logger.info("  HTTP status: %s", status)
     if ev.get("error"):
         logger.info("  Eval error : %s", ev["error"])
     logger.info("─" * 60)
+
+
+def _format_counter(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return str(value)
 
 
 async def run_benchmark(
@@ -301,6 +375,12 @@ async def run_benchmark(
             task_name=task_name,
         )
         summaries.append(summary)
+        result = "PASS" if summary.get("passed") else "FAIL"
+        detail = "" if summary.get("passed") else f" ({summary.get('failure_category') or 'unknown'})"
+        logger.info(
+            "Run %d/%d done: %s — %s%s in %.1fs",
+            i, total, model["id"], result, detail, summary.get("wall_seconds", 0.0),
+        )
 
     report_path = write_markdown_report(job_dir)
     logger.info("Generated report: %s", report_path)

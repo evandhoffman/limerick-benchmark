@@ -84,6 +84,43 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertIn("| evaluation_skipped | 1 |", markdown)
         self.assertIn("**Commentary:** _Add manual notes here._", markdown)
 
+    def test_render_missing_agent_telemetry_as_na(self) -> None:
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "20260417.155108"
+            job_dir.mkdir()
+
+            self._write_model(
+                job_dir,
+                slug="qwen3.5_9b",
+                summary={
+                    "model_id": "qwen3.5:9b",
+                    "started_at": "2026-04-17T12:46:34.097863+00:00",
+                    "wall_seconds": 71.8,
+                    "tokens_in": None,
+                    "tokens_out": None,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "aider_edit_format_reject",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": False,
+                    "eval": {
+                        "entry_point": None,
+                        "server_started": False,
+                        "http_status": None,
+                        "response_bytes": None,
+                        "error": "no_entry_point",
+                    },
+                },
+            )
+
+            markdown = generate_markdown_report(job_dir, task_label="limerick", include_placeholders=False)
+
+        self.assertIn("| Tokens in | n/a |", markdown)
+        self.assertIn("| Tokens out | n/a |", markdown)
+        self.assertIn("| API calls | n/a |", markdown)
+        self.assertIn("| Tool calls | n/a |", markdown)
+
     def test_load_job_report_infers_task_from_single_task_file_and_no_placeholders(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

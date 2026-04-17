@@ -286,6 +286,12 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _NUMERIC_RE = re.compile(r"\b\d+(?:[.,]\d+)*\b")
 _PATH_LIKE_RE = re.compile(r"(?:[A-Za-z]:)?(?:[\w.-]+[/\\])+[\w.-]+")
 _HEX_RE = re.compile(r"\b[0-9a-f]{8,}\b", re.IGNORECASE)
+_AIDER_TOKEN_USAGE_RE = re.compile(
+    r"Tokens:\s*([0-9][0-9,]*(?:\.\d+)?)\s*([kKmMbB]?)\s*sent,\s*"
+    r"([0-9][0-9,]*(?:\.\d+)?)\s*([kKmMbB]?)\s*received",
+    re.IGNORECASE,
+)
+_AIDER_REFLECTION_LIMIT_RE = re.compile(r"Only\s+\d+\s+reflections allowed, stopping\.", re.IGNORECASE)
 
 _AIDER_EDIT_PATTERNS = [
     re.compile(r"Applied edit to\s+(\S+)"),
@@ -344,6 +350,49 @@ def _extract_aider_edit_target(line: str) -> str | None:
         if m:
             return m.group(1).strip(".,:;\"'`")
     return None
+
+
+def _parse_human_number(number: str, suffix: str = "") -> int:
+    value = float(number.replace(",", ""))
+    multiplier = {
+        "": 1,
+        "k": 1_000,
+        "m": 1_000_000,
+        "b": 1_000_000_000,
+    }[suffix.lower()]
+    return int(round(value * multiplier))
+
+
+def _parse_aider_token_usage(line: str) -> tuple[int, int] | None:
+    match = _AIDER_TOKEN_USAGE_RE.search(line)
+    if not match:
+        return None
+    tokens_in = _parse_human_number(match.group(1), match.group(2))
+    tokens_out = _parse_human_number(match.group(3), match.group(4))
+    return tokens_in, tokens_out
+
+
+def _detect_aider_terminal_issue(lines: list[str]) -> tuple[str, str] | None:
+    details: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        lower = stripped.lower()
+        if not stripped:
+            continue
+        if "did not conform to the edit format" in lower:
+            details.append(stripped)
+        elif "edit-errors.html" in lower:
+            details.append(stripped)
+        elif "no filename provided before" in lower:
+            details.append(stripped)
+        elif _AIDER_REFLECTION_LIMIT_RE.search(stripped):
+            details.append(stripped)
+
+    if not details:
+        return None
+
+    unique_details = list(dict.fromkeys(details))
+    return "aider_edit_format_reject", " | ".join(unique_details[:4])
 
 
 def _hash_workspace_tree(workspace: Path) -> str:
@@ -419,6 +468,10 @@ async def _run_aider(
         "error": None,
         "agent_stop": None,
     }
+    token_state["tokens_in"] = None
+    token_state["tokens_out"] = None
+    token_state["api_calls"] = None
+    token_state["tool_calls"] = None
 
     trace: list[dict] = []
     def append_trace(entry: dict) -> None:
@@ -453,6 +506,7 @@ async def _run_aider(
         edit_counts: dict[str, int] = {}
         abort_reason: str | None = None
         abort_category: str | None = None
+        aider_log_lines: list[str] = []
 
         def trip(category: str, reason: str) -> None:
             nonlocal abort_reason, abort_category
@@ -473,6 +527,11 @@ async def _run_aider(
                     continue
                 print(f"[{run_label}] {text}", flush=True)
                 append_trace({"type": "aider_log", "content": text})
+                aider_log_lines.append(text)
+
+                usage = _parse_aider_token_usage(text)
+                if usage is not None:
+                    token_state["tokens_in"], token_state["tokens_out"] = usage
 
                 normalized = _normalize_aider_line(text)
                 if normalized:
@@ -552,6 +611,16 @@ async def _run_aider(
             stats["error"] = f"Detected infinite loop: {abort_reason}"
             stats["finish_reason"] = "stuck_loop"
             stats["agent_stop"] = {"category": abort_category, "detail": abort_reason}
+
+        terminal_issue = _detect_aider_terminal_issue(aider_log_lines)
+        if (
+            terminal_issue is not None
+            and not stats["timed_out"]
+            and stats["finish_reason"] == "completed"
+        ):
+            category, detail = terminal_issue
+            stats["finish_reason"] = category
+            stats["agent_stop"] = {"category": category, "detail": detail}
 
         if proc.returncode is None:
             await terminate_process_groups({pgid})

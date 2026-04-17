@@ -9,11 +9,13 @@ from benchmark.agent import (
     _aider_low_uniqueness,
     _declared_dependencies,
     _contains_redundant_uv_init,
+    _detect_aider_terminal_issue,
     _extract_aider_edit_target,
     _format_status_line,
     _hash_workspace_tree,
     _normalize_aider_line,
     _normalize_dependency_name,
+    _parse_aider_token_usage,
     _parse_tool_arguments,
     _prepare_command,
     run_agent,
@@ -189,6 +191,33 @@ class AiderLoopDetectionTests(unittest.TestCase):
 
             (workspace / "app.py").write_text("print('bye')\n")
             self.assertNotEqual(h1, _hash_workspace_tree(workspace))
+
+    def test_detects_aider_edit_format_reject_from_log_stream(self) -> None:
+        issue = _detect_aider_terminal_issue(
+            [
+                "The LLM did not conform to the edit format.",
+                "https://aider.chat/docs/troubleshooting/edit-errors.html",
+                "No filename provided before ``` in file listing",
+                "Only 3 reflections allowed, stopping.",
+            ]
+        )
+
+        self.assertIsNotNone(issue)
+        category, detail = issue or ("", "")
+        self.assertEqual(category, "aider_edit_format_reject")
+        self.assertIn("The LLM did not conform to the edit format.", detail)
+        self.assertIn("No filename provided before ``` in file listing", detail)
+
+    def test_parses_aider_token_usage_summary(self) -> None:
+        self.assertEqual(
+            _parse_aider_token_usage("Tokens: 5.2k sent, 820 received."),
+            (5200, 820),
+        )
+        self.assertEqual(
+            _parse_aider_token_usage("Tokens: 12,400 sent, 1.3k received."),
+            (12400, 1300),
+        )
+        self.assertIsNone(_parse_aider_token_usage("Cost: $0.02"))
 
 
 class AiderConfigurationTests(unittest.TestCase):

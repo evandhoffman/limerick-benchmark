@@ -9,6 +9,7 @@ from benchmark.runner import (
     _new_job_id,
     _prepare_workspace,
     _run_dir,
+    _run_one,
     _should_evaluate,
     _slug,
     _task_prompt_with_workspace_note,
@@ -37,7 +38,7 @@ class RunnerEvaluationPolicyTests(unittest.TestCase):
 
 
 class RunnerWorkspacePreparationTests(unittest.TestCase):
-    def test_prepare_workspace_is_a_noop_without_task_resources(self) -> None:
+    def test_prepare_workspace_is_a_noop_for_react_without_task_resources(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             _prepare_workspace(workspace)
@@ -57,12 +58,39 @@ class RunnerWorkspacePreparationTests(unittest.TestCase):
 
             self.assertEqual((workspace / "limericks.txt").read_text(), "seed\n")
 
-    def test_task_prompt_includes_workspace_note(self) -> None:
-        prompt = _task_prompt_with_workspace_note("Build the app.", task_name="limerick")
-        self.assertIn("responsible for setting", prompt)
+    def test_prepare_workspace_bootstraps_uv_project_for_aider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch("benchmark.runner.subprocess.run") as run_mock:
+                _prepare_workspace(workspace, agent_type="aider")
+
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual(run_mock.call_args_list[0].args[0][:3], ["uv", "init", "."])
+        self.assertEqual(run_mock.call_args_list[1].args[0], ["uv", "add", "flask"])
+
+    def test_prepare_workspace_skips_bootstrap_for_react(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch("benchmark.runner.subprocess.run") as run_mock:
+                _prepare_workspace(workspace, agent_type="react")
+            run_mock.assert_not_called()
+
+    def test_task_prompt_for_react_agent(self) -> None:
+        prompt = _task_prompt_with_workspace_note(
+            "Build the app.", task_name="limerick", agent_type="react"
+        )
+        self.assertIn("Setting up the project", prompt)
         self.assertIn("`app.py`", prompt)
         self.assertIn("limericks.txt", prompt)
         self.assertTrue(prompt.endswith("Build the app."))
+
+    def test_task_prompt_for_aider_agent(self) -> None:
+        prompt = _task_prompt_with_workspace_note(
+            "Build the app.", task_name="limerick", agent_type="aider"
+        )
+        self.assertIn("Flask installed", prompt)
+        self.assertIn("Do not run `uv init`", prompt)
+        self.assertIn("limericks.txt", prompt)
 
     def test_run_dir_nests_model_under_job_id(self) -> None:
         job_id = "20260417.073034"
@@ -144,3 +172,35 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(job_metadata["enable_hardware_metrics"])
             self.assertEqual(job_metadata["model_ids"], ["gemma4:e2b"])
             write_report_mock.assert_called_once_with(results_root / "20260417.083818")
+
+
+class RunnerPortGuardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_one_checks_port_before_starting_model_run(self) -> None:
+        model = {"id": "gemma4:e2b", "provider": "ollama"}
+        with TemporaryDirectory() as tmp:
+            results_root = Path(tmp) / "results"
+            workspace_base = Path(tmp) / "workspaces"
+            with (
+                mock.patch("benchmark.runner.RESULTS_ROOT", results_root),
+                mock.patch("benchmark.runner.WORKSPACE_BASE", workspace_base),
+                mock.patch(
+                    "benchmark.runner.assert_port_available",
+                    side_effect=RuntimeError("Port 8181 is already in use before starting run for gemma4:e2b."),
+                ) as assert_mock,
+                mock.patch("benchmark.runner.run_agent", new=mock.AsyncMock()) as run_agent_mock,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "starting run for gemma4:e2b"):
+                    await _run_one(
+                        model,
+                        "Build the app.",
+                        timeout=900,
+                        aider_stagnation_timeout=420,
+                        enable_hardware_metrics=False,
+                        job_id="20260417.083818",
+                        agent_type="react",
+                        run_label="1/1:gemma4-e2b:react",
+                        task_name="limerick",
+                    )
+
+        assert_mock.assert_called_once()
+        run_agent_mock.assert_not_called()

@@ -36,11 +36,13 @@ directly** — do not create per-agent variants.
     Every stdout line is printed with the `run_label` prefix so multi-model
     runs remain grep-friendly.
 - `evaluator.py`: Starts the generated app and validates it against the task
-  requirements (HTTP 200 on port 8181 for the limerick task). It auto-
-  discovers entry points (`run.sh`, `[project.scripts]`, `app.py` / `main.py`
-  / `server.py` / `web.py`, any Flask-containing `.py`, or `python -m
-  <package>` for a `*/__main__.py`) and tries them in order, writing a
-  convenience `run.sh` into the results directory.
+  requirements. For the limerick task it requires the canonical entry point
+  `app.py` and treats any other discovered start command as an
+  `entry_point_mismatch` failure. It starts `uv run python app.py`, requires
+  HTTP 200 on port 8181, and checks the response body for both a 5-line
+  limerick and either a refresh `<meta>` tag or a `setInterval(` call. It
+  still records alternative entry point candidates and writes a convenience
+  `run.sh` into the results directory.
 - `metrics.py`: Background 5-second sampler for CPU/memory and token counts.
   When `--enable-hardware-metrics` is set it also collects GPU utilization,
   GPU power (mW), die temperature, and fan RPM via `powermetrics` (requires

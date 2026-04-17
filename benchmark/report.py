@@ -340,10 +340,10 @@ def _render_model_section(
         ("Entry point", _code_or_dash(eval_result.get("entry_point"))),
         ("Eval error", str(eval_result.get("error") or "-")),
         ("Response bytes", str(eval_result.get("response_bytes") or "-")),
-        ("Tokens in", str(summary.get("tokens_in", 0))),
-        ("Tokens out", str(summary.get("tokens_out", 0))),
-        ("API calls", str(summary.get("api_calls", 0))),
-        ("Tool calls", str(summary.get("tool_calls", 0))),
+        ("Tokens in", _format_counter(summary.get("tokens_in"))),
+        ("Tokens out", _format_counter(summary.get("tokens_out"))),
+        ("API calls", _format_counter(summary.get("api_calls"))),
+        ("Tool calls", _format_counter(summary.get("tool_calls"))),
     ]
 
     agent_stop = summary.get("agent_stop")
@@ -493,6 +493,8 @@ def _load_job_metadata(job_dir: Path) -> dict[str, Any]:
 
 
 def _is_pass(summary: dict[str, Any]) -> bool:
+    if "passed" in summary:
+        return bool(summary.get("passed"))
     return summary.get("eval", {}).get("http_status") == 200
 
 
@@ -520,6 +522,12 @@ def _format_metric_percent(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:.1f}%"
+
+
+def _format_counter(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return str(value)
 
 
 def _code_or_dash(value: Any) -> str:

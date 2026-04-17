@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import logging
+import re
 import stat
 import tomllib
 from pathlib import Path
@@ -24,6 +26,33 @@ logger = logging.getLogger(__name__)
 PORT = 8181
 STARTUP_TIMEOUT = 30  # seconds to wait for server to come up
 POLL_INTERVAL = 1.0
+CANONICAL_ENTRY_POINT = "uv run python app.py"
+
+_REFRESH_RE = re.compile(r"<meta[^>]+http-equiv\s*=\s*[\"']?refresh\b|setInterval\s*\(", re.IGNORECASE)
+_SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
+_BLOCK_BREAK_RE = re.compile(r"(?i)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>|</pre>|</tr>")
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _empty_eval_result(
+    *,
+    entry_point: str | None = None,
+    entry_point_candidates: list[str] | None = None,
+    entry_point_mismatch: bool = False,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "entry_point": entry_point,
+        "entry_point_candidates": entry_point_candidates or [],
+        "entry_point_mismatch": entry_point_mismatch,
+        "server_started": False,
+        "http_status": None,
+        "response_bytes": None,
+        "body_has_refresh_mechanism": False,
+        "body_has_limerick_shape": False,
+        "passed": False,
+        "error": error,
+    }
 
 
 def _script_commands_from_pyproject(workspace: Path) -> list[str]:
@@ -90,6 +119,70 @@ def _candidate_entry_points(workspace: Path) -> list[str]:
     return candidates
 
 
+def _extract_body_text_lines(body_text: str) -> list[str]:
+    cleaned = _SCRIPT_STYLE_RE.sub(" ", body_text)
+    cleaned = _BLOCK_BREAK_RE.sub("\n", cleaned)
+    cleaned = _TAG_RE.sub(" ", cleaned)
+    cleaned = html.unescape(cleaned)
+    lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return [line for line in lines if line]
+
+
+def _limerick_first_lines(workspace: Path) -> list[str]:
+    limericks = workspace / "limericks.txt"
+    if not limericks.exists():
+        return []
+    try:
+        text = limericks.read_text()
+    except OSError:
+        return []
+
+    first_lines: list[str] = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if lines:
+            first_lines.append(lines[0])
+    return first_lines
+
+
+def _body_has_refresh_mechanism(body_text: str) -> bool:
+    return bool(_REFRESH_RE.search(body_text))
+
+
+def _body_has_limerick_shape(body_text: str, workspace: Path) -> bool:
+    lines = _extract_body_text_lines(body_text)
+    if len(lines) >= 5:
+        return True
+
+    normalized_body = " ".join(lines)
+    return any(first_line in normalized_body for first_line in _limerick_first_lines(workspace))
+
+
+def _classify_http_response(http_status: int | None, body: bytes | None, workspace: Path) -> dict[str, Any]:
+    result = {
+        "body_has_refresh_mechanism": False,
+        "body_has_limerick_shape": False,
+        "passed": False,
+        "error": None,
+    }
+    if http_status != 200 or body is None:
+        return result
+
+    body_text = body.decode("utf-8", errors="replace")
+    has_refresh = _body_has_refresh_mechanism(body_text)
+    has_limerick = _body_has_limerick_shape(body_text, workspace)
+    result["body_has_refresh_mechanism"] = has_refresh
+    result["body_has_limerick_shape"] = has_limerick
+
+    if not has_refresh:
+        result["error"] = "body_missing_refresh"
+    elif not has_limerick:
+        result["error"] = "body_missing_limerick"
+    else:
+        result["passed"] = True
+    return result
+
+
 async def _wait_for_port(port: int, timeout: float) -> bool:
     """Poll localhost:port until it accepts connections. Returns True if up."""
     deadline = asyncio.get_running_loop().time() + timeout
@@ -108,13 +201,7 @@ async def _try_entry_point(workspace: Path, entry_cmd: str) -> dict[str, Any]:
     """Start one candidate entry point and return the evaluation result."""
     assert_port_available(PORT, f"starting evaluator command '{entry_cmd}'")
 
-    result: dict[str, Any] = {
-        "entry_point": entry_cmd,
-        "server_started": False,
-        "http_status": None,
-        "response_bytes": None,
-        "error": None,
-    }
+    result = _empty_eval_result(entry_point=entry_cmd)
 
     proc = await asyncio.create_subprocess_shell(
         entry_cmd,
@@ -149,6 +236,7 @@ async def _try_entry_point(workspace: Path, entry_cmd: str) -> dict[str, Any]:
                     body = await resp.read()
                     result["http_status"] = resp.status
                     result["response_bytes"] = len(body)
+                    result.update(_classify_http_response(resp.status, body, workspace))
                     logger.info("GET / → %d (%d bytes)", resp.status, len(body))
             except Exception as exc:
                 result["error"] = f"http_error: {exc}"
@@ -170,36 +258,26 @@ async def evaluate(workspace: Path, results_dir: Path) -> dict[str, Any]:
     entry_points = _candidate_entry_points(workspace)
     if not entry_points:
         logger.warning("No entry point found in workspace")
-        result = {
-            "entry_point": None,
-            "entry_point_candidates": [],
-            "server_started": False,
-            "http_status": None,
-            "response_bytes": None,
-            "error": "no_entry_point",
-        }
+        result = _empty_eval_result(error="no_entry_point")
         _write_run_sh(results_dir, workspace, None)
         return result
 
-    last_result: dict[str, Any] = {
-        "entry_point": entry_points[0],
-        "entry_point_candidates": entry_points,
-        "server_started": False,
-        "http_status": None,
-        "response_bytes": None,
-        "error": "port_never_opened",
-    }
+    canonical_entry_point = CANONICAL_ENTRY_POINT if (workspace / "app.py").exists() else None
+    if canonical_entry_point is None:
+        logger.warning("Workspace has non-canonical entry points but no app.py: %s", entry_points)
+        result = _empty_eval_result(
+            entry_point=entry_points[0],
+            entry_point_candidates=entry_points,
+            entry_point_mismatch=True,
+            error="entry_point_mismatch",
+        )
+        _write_run_sh(results_dir, workspace, entry_points[0])
+        return result
 
-    for entry_cmd in entry_points:
-        candidate_result = await _try_entry_point(workspace, entry_cmd)
-        candidate_result["entry_point_candidates"] = entry_points
-        last_result = candidate_result
-        if candidate_result.get("http_status") == 200:
-            _write_run_sh(results_dir, workspace, entry_cmd)
-            return candidate_result
-
-    _write_run_sh(results_dir, workspace, last_result.get("entry_point"))
-    return last_result
+    result = await _try_entry_point(workspace, canonical_entry_point)
+    result["entry_point_candidates"] = entry_points
+    _write_run_sh(results_dir, workspace, canonical_entry_point)
+    return result
 
 
 def _write_run_sh(results_dir: Path, workspace: Path, entry_cmd: str | None) -> None:
