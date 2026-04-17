@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .runner import RESULTS_ROOT, TASKS_DIR
+PROJECT_ROOT = Path(__file__).parent.parent
+RESULTS_ROOT = PROJECT_ROOT / "results"
+REPORTS_ROOT = PROJECT_ROOT / "reports"
+TASKS_DIR = PROJECT_ROOT / "tasks"
 
 
 @dataclass(frozen=True)
@@ -169,6 +172,32 @@ def generate_markdown_report(
         lines.append(f"| {eval_error} | {count} |")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def report_output_path(job_id: str, reports_root: Path | None = None) -> Path:
+    """Return the default on-disk path for a generated Markdown report."""
+    return (reports_root or REPORTS_ROOT) / f"results_{job_id}.md"
+
+
+def write_markdown_report(
+    job_dir: Path,
+    *,
+    output_path: Path | None = None,
+    task_label: str | None = None,
+    agent_label: str | None = None,
+    include_placeholders: bool = True,
+) -> Path:
+    """Render and write a Markdown report, returning the output path."""
+    path = output_path or report_output_path(job_dir.name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    markdown = generate_markdown_report(
+        job_dir,
+        task_label=task_label,
+        agent_label=agent_label,
+        include_placeholders=include_placeholders,
+    )
+    path.write_text(markdown)
+    return path
 
 
 def _render_model_section(

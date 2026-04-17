@@ -21,6 +21,8 @@ uv run prefetch --model gemma4:e2b qwen3.5:9b
 # Run a fast proof-of-concept pass
 uv run benchmark run --set poc
 
+# Each completed run auto-generates reports/results_<job_id>.md
+
 # Run the recommended benchmark set with the default ReAct agent
 uv run benchmark run --set recommended
 
@@ -42,8 +44,8 @@ uv run benchmark run --agent aider --set recommended --aider-stagnation-timeout 
 # Generate a Markdown report for an existing job
 uv run benchmark report --job-id 20260417.083818
 
-# Write the report to a file
-uv run benchmark report --job-id 20260417.083818 --output results_20260417.083818.md
+# Write the report to a specific file
+uv run benchmark report --job-id 20260417.083818 --output reports/results_20260417.083818.md
 
 # Re-run a generated app manually from a finished result directory
 cd results/20260417.083818/gemma4_e2b && ./run.sh
@@ -59,6 +61,7 @@ cd results/20260417.083818/gemma4_e2b && ./run.sh
 4. The run is **hard-killed after 15 minutes** by default (override with `--timeout`).
 5. System metrics (CPU, memory, token counts, and optionally GPU / thermal / fan data) are sampled every 5 seconds throughout the run.
 6. After the run, the evaluator auto-discovers entry points (`run.sh`, `[project.scripts]`, `app.py` / `main.py` / `server.py` / `web.py`, Flask-containing `.py` files, and `python -m <pkg>`), starts the server, and checks for HTTP 200 on port 8181. A convenience `run.sh` is written to the results directory for manual re-evaluation.
+7. When the full benchmark job completes, a Markdown summary report is auto-written to `reports/results_<job_id>.md`.
 
 ## Current task: Limerick Generator
 

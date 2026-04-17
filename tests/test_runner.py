@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -126,6 +127,10 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
                     "benchmark.runner._run_one",
                     new=mock.AsyncMock(return_value={"model_id": model["id"]}),
                 ) as run_one_mock,
+                mock.patch(
+                    "benchmark.runner.write_markdown_report",
+                    return_value=Path(tmp) / "reports" / "results_20260417.083818.md",
+                ),
             ):
                 summaries = await run_benchmark(
                     [model],
@@ -138,3 +143,40 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
             run_one_mock.await_args.kwargs["aider_stagnation_timeout"],
             420,
         )
+
+    async def test_run_benchmark_writes_job_metadata_and_generates_report(self) -> None:
+        model = {"id": "gemma4:e2b", "provider": "ollama"}
+        with TemporaryDirectory() as tmp:
+            results_root = Path(tmp) / "results"
+            report_path = Path(tmp) / "reports" / "results_20260417.083818.md"
+            with (
+                mock.patch("benchmark.runner.RESULTS_ROOT", results_root),
+                mock.patch("benchmark.runner._load_task", return_value="Build the app"),
+                mock.patch("benchmark.runner._new_job_id", return_value="20260417.083818"),
+                mock.patch(
+                    "benchmark.runner._run_one",
+                    new=mock.AsyncMock(return_value={"model_id": model["id"]}),
+                ),
+                mock.patch(
+                    "benchmark.runner.write_markdown_report",
+                    return_value=report_path,
+                ) as write_report_mock,
+            ):
+                await run_benchmark(
+                    [model],
+                    task_name="limerick",
+                    agent_type="react",
+                    timeout=600,
+                    aider_stagnation_timeout=420,
+                    enable_hardware_metrics=True,
+                )
+
+            job_metadata = json.loads((results_root / "20260417.083818" / "job.json").read_text())
+            self.assertEqual(job_metadata["job_id"], "20260417.083818")
+            self.assertEqual(job_metadata["task_name"], "limerick")
+            self.assertEqual(job_metadata["agent_type"], "react")
+            self.assertEqual(job_metadata["timeout_seconds"], 600)
+            self.assertEqual(job_metadata["aider_stagnation_timeout_seconds"], 420)
+            self.assertTrue(job_metadata["enable_hardware_metrics"])
+            self.assertEqual(job_metadata["model_ids"], ["gemma4:e2b"])
+            write_report_mock.assert_called_once_with(results_root / "20260417.083818")

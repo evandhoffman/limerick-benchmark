@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from benchmark.report import generate_markdown_report, load_job_report
+from benchmark.report import generate_markdown_report, load_job_report, report_output_path, write_markdown_report
 
 
 class ReportGenerationTests(unittest.TestCase):
@@ -124,6 +124,42 @@ class ReportGenerationTests(unittest.TestCase):
         self.assertEqual(report.task_label, "limerick")
         self.assertEqual(report.agent_label, "react")
         self.assertNotIn("**Commentary:** _Add manual notes here._", markdown)
+
+    def test_write_markdown_report_uses_reports_directory_by_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir = root / "results" / "20260417.083818"
+            job_dir.mkdir(parents=True)
+            self._write_model(
+                job_dir,
+                slug="gemma4_e2b",
+                summary={
+                    "model_id": "gemma4:e2b",
+                    "started_at": "2026-04-17T12:38:35.781344+00:00",
+                    "wall_seconds": 15.7,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "api_calls": 0,
+                    "tool_calls": 0,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 2064,
+                        "error": None,
+                    },
+                },
+            )
+
+            with mock.patch("benchmark.report.REPORTS_ROOT", root / "reports"):
+                output_path = write_markdown_report(job_dir, include_placeholders=False)
+                self.assertEqual(output_path, report_output_path("20260417.083818", root / "reports"))
+                self.assertTrue(output_path.exists())
+                self.assertIn("# Benchmark Results - Job `20260417.083818`", output_path.read_text())
+                self.assertNotIn("**Commentary:** _Add manual notes here._", output_path.read_text())
 
     def _write_model(
         self,

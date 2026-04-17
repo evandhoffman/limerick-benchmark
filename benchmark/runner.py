@@ -15,6 +15,7 @@ from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS, run_agent
 from .evaluator import PORT, evaluate
 from .metrics import MetricsCollector
 from .process_utils import assert_port_available, sanitized_subprocess_env
+from .report import write_markdown_report
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,20 @@ async def run_benchmark(
     job_id = _new_job_id()
     job_dir = RESULTS_ROOT / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "job.json").write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "task_name": task_name,
+                "agent_type": agent_type,
+                "timeout_seconds": timeout,
+                "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
+                "enable_hardware_metrics": enable_hardware_metrics,
+                "model_ids": [model["id"] for model in models],
+            },
+            indent=2,
+        )
+    )
 
     logger.info(
         "Starting benchmark job %s: %d model(s), task=%s, timeout=%ds, aider_stagnation_timeout=%ds, hardware_metrics=%s, agent=%s",
@@ -283,5 +298,8 @@ async def run_benchmark(
             run_label=run_label,
         )
         summaries.append(summary)
+
+    report_path = write_markdown_report(job_dir)
+    logger.info("Generated report: %s", report_path)
 
     return summaries
