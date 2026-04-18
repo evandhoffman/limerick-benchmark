@@ -3,6 +3,7 @@
 # Fields:
 #   id:          Ollama tag or Anthropic model ID
 #   provider:    ollama | anthropic
+#   released:    ISO date the base model was publicly announced/released
 #   size_gb:     download size (null for cloud models)
 #   context_k:   context window in thousands of tokens
 #   multimodal:  true if model accepts image input
@@ -18,6 +19,7 @@
 reference:
   - id: claude-opus-4-7
     provider: anthropic
+    released: "2026-04-16"
     size_gb: null
     context_k: 200
     recommended: false
@@ -25,6 +27,7 @@ reference:
 
   - id: claude-sonnet-4-6
     provider: anthropic
+    released: "2026-02-17"
     size_gb: null
     context_k: 200
     recommended: false
@@ -33,18 +36,20 @@ reference:
 
   - id: claude-haiku-4-5-20251001
     provider: anthropic
+    released: "2025-10-15"
     size_gb: null
     context_k: 200
     recommended: false
     notes: "Lower-cost reference baseline."
 
 # ---------------------------------------------------------------------------
-# Gemma 4 (Google) — local via Ollama
+# Gemma 4 (Google) — released 2026-04-02
 # ---------------------------------------------------------------------------
 gemma4:
   # --- e2b family (~2B active params, MoE) ---
   - id: gemma4:e2b
     provider: ollama
+    released: "2026-04-02"
     size_gb: 7.2
     context_k: 128
     multimodal: true
@@ -55,6 +60,7 @@ gemma4:
 
   - id: gemma4:e2b-it-q4_K_M
     provider: ollama
+    released: "2026-04-02"
     size_gb: 7.2
     context_k: 128
     multimodal: true
@@ -62,6 +68,7 @@ gemma4:
 
   - id: gemma4:e2b-it-q8_0
     provider: ollama
+    released: "2026-04-02"
     size_gb: 8.1
     context_k: 128
     multimodal: true
@@ -69,6 +76,7 @@ gemma4:
 
   - id: gemma4:e2b-it-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 10.0
     context_k: 128
     multimodal: true
@@ -76,14 +84,15 @@ gemma4:
 
   - id: gemma4:e2b-mlx-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 10.0
     context_k: 128
     multimodal: false
-    recommended: true
     notes: "Apple MLX runtime, BF16. Same architecture as e2b-it-bf16 but different execution path — compare throughput and thermals."
 
   - id: gemma4:e2b-mxfp8
     provider: ollama
+    released: "2026-04-02"
     size_gb: 7.9
     context_k: 128
     multimodal: false
@@ -91,6 +100,7 @@ gemma4:
 
   - id: gemma4:e2b-nvfp4
     provider: ollama
+    released: "2026-04-02"
     size_gb: 7.1
     context_k: 128
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
@@ -98,6 +108,7 @@ gemma4:
   # --- e4b family (~4B active params, MoE) ---
   - id: gemma4:e4b
     provider: ollama
+    released: "2026-04-02"
     size_gb: 9.6
     context_k: 128
     multimodal: true
@@ -106,6 +117,7 @@ gemma4:
 
   - id: gemma4:latest
     provider: ollama
+    released: "2026-04-02"
     size_gb: 9.6
     context_k: 128
     multimodal: true
@@ -113,6 +125,7 @@ gemma4:
 
   - id: gemma4:e4b-it-q4_K_M
     provider: ollama
+    released: "2026-04-02"
     size_gb: 9.6
     context_k: 128
     multimodal: true
@@ -120,6 +133,7 @@ gemma4:
 
   - id: gemma4:e4b-it-q8_0
     provider: ollama
+    released: "2026-04-02"
     size_gb: 12.0
     context_k: 128
     multimodal: true
@@ -127,6 +141,7 @@ gemma4:
 
   - id: gemma4:e4b-it-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 16.0
     context_k: 128
     multimodal: true
@@ -134,6 +149,7 @@ gemma4:
 
   - id: gemma4:e4b-mlx-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 16.0
     context_k: 128
     multimodal: false
@@ -141,6 +157,7 @@ gemma4:
 
   - id: gemma4:e4b-mxfp8
     provider: ollama
+    released: "2026-04-02"
     size_gb: 11.0
     context_k: 128
     multimodal: false
@@ -148,6 +165,7 @@ gemma4:
 
   - id: gemma4:e4b-nvfp4
     provider: ollama
+    released: "2026-04-02"
     size_gb: 9.6
     context_k: 128
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
@@ -155,6 +173,7 @@ gemma4:
   # --- 26b family ---
   - id: gemma4:26b
     provider: ollama
+    released: "2026-04-02"
     size_gb: 18.0
     context_k: 256
     multimodal: true
@@ -164,6 +183,7 @@ gemma4:
 
   - id: gemma4:26b-a4b-it-q4_K_M
     provider: ollama
+    released: "2026-04-02"
     size_gb: 18.0
     context_k: 256
     multimodal: true
@@ -171,6 +191,7 @@ gemma4:
 
   - id: gemma4:26b-a4b-it-q8_0
     provider: ollama
+    released: "2026-04-02"
     size_gb: 28.0
     context_k: 256
     multimodal: true
@@ -178,6 +199,7 @@ gemma4:
 
   - id: gemma4:26b-mlx-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 52.0
     context_k: 256
     multimodal: false
@@ -185,6 +207,7 @@ gemma4:
 
   - id: gemma4:26b-mxfp8
     provider: ollama
+    released: "2026-04-02"
     size_gb: 27.0
     context_k: 256
     multimodal: false
@@ -192,6 +215,7 @@ gemma4:
 
   - id: gemma4:26b-nvfp4
     provider: ollama
+    released: "2026-04-02"
     size_gb: 17.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
@@ -199,13 +223,16 @@ gemma4:
   # --- 31b family ---
   - id: gemma4:31b
     provider: ollama
+    released: "2026-04-02"
     size_gb: 20.0
     context_k: 256
     multimodal: true
-    notes: "Alias for 31b-it-q4_K_M (same hash). Largest practical Gemma 4 on 64 GB."
+    recommended: true
+    notes: "Alias for 31b-it-q4_K_M (same hash). Largest practical Gemma 4 on 64 GB. New contender — untested."
 
   - id: gemma4:31b-it-q4_K_M
     provider: ollama
+    released: "2026-04-02"
     size_gb: 20.0
     context_k: 256
     multimodal: true
@@ -213,6 +240,7 @@ gemma4:
 
   - id: gemma4:31b-it-q8_0
     provider: ollama
+    released: "2026-04-02"
     size_gb: 34.0
     context_k: 256
     multimodal: true
@@ -220,6 +248,7 @@ gemma4:
 
   - id: gemma4:31b-it-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 63.0
     context_k: 256
     multimodal: true
@@ -227,6 +256,7 @@ gemma4:
 
   - id: gemma4:31b-mlx-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 63.0
     context_k: 256
     multimodal: false
@@ -234,6 +264,7 @@ gemma4:
 
   - id: gemma4:31b-mxfp8
     provider: ollama
+    released: "2026-04-02"
     size_gb: 32.0
     context_k: 256
     multimodal: false
@@ -241,29 +272,40 @@ gemma4:
 
   - id: gemma4:31b-nvfp4
     provider: ollama
+    released: "2026-04-02"
     size_gb: 20.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
 
   - id: gemma4:31b-cloud
     provider: ollama
+    released: "2026-04-02"
     size_gb: null
     exclude: "Cloud redirect — no local inference, no GPU metrics."
 
 # ---------------------------------------------------------------------------
-# Qwen 3.6 (Alibaba) — local via Ollama
+# Qwen 3.6 (Alibaba) — released 2026-04-02
 # ---------------------------------------------------------------------------
 qwen3.6:
   - id: qwen3.6:latest
     provider: ollama
+    released: "2026-04-02"
     size_gb: 24.0
     context_k: 256
     multimodal: true
-    recommended: true
     notes: "Alias for 35b-a3b-q4_K_M (same hash). Newest Qwen generation; compare to qwen3.5:35b-a3b for generational delta."
+
+  - id: qwen3.6:35b
+    provider: ollama
+    released: "2026-04-02"
+    size_gb: 24.0
+    context_k: 256
+    multimodal: true
+    notes: "Identical to qwen3.6:latest — use that tag instead."
 
   - id: qwen3.6:35b-a3b
     provider: ollama
+    released: "2026-04-02"
     size_gb: 24.0
     context_k: 256
     multimodal: true
@@ -271,6 +313,7 @@ qwen3.6:
 
   - id: qwen3.6:35b-a3b-q4_K_M
     provider: ollama
+    released: "2026-04-02"
     size_gb: 24.0
     context_k: 256
     multimodal: true
@@ -278,14 +321,15 @@ qwen3.6:
 
   - id: qwen3.6:35b-a3b-q8_0
     provider: ollama
+    released: "2026-04-02"
     size_gb: 39.0
     context_k: 256
     multimodal: true
-    recommended: true
     notes: "Higher-precision Qwen 3.6. Leaves 25 GB headroom."
 
   - id: qwen3.6:35b-a3b-mxfp8
     provider: ollama
+    released: "2026-04-02"
     size_gb: 38.0
     context_k: 256
     multimodal: false
@@ -293,6 +337,7 @@ qwen3.6:
 
   - id: qwen3.6:35b-a3b-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 71.0
     context_k: 256
     multimodal: true
@@ -300,6 +345,7 @@ qwen3.6:
 
   - id: qwen3.6:35b-a3b-mlx-bf16
     provider: ollama
+    released: "2026-04-02"
     size_gb: 70.0
     context_k: 256
     multimodal: false
@@ -307,17 +353,43 @@ qwen3.6:
 
   - id: qwen3.6:35b-a3b-nvfp4
     provider: ollama
+    released: "2026-04-02"
     size_gb: 22.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
 
+  # --- 35b coding fine-tune (new in qwen3.6) ---
+  - id: qwen3.6:35b-a3b-coding-mxfp8
+    provider: ollama
+    released: "2026-04-02"
+    size_gb: 38.0
+    context_k: 256
+    multimodal: false
+    recommended: true
+    notes: "Coding-specialized fine-tune of qwen3.6 35b. Key comparison: gen 3.6 coding vs qwen3.5:35b-a3b-coding-mxfp8."
+
+  - id: qwen3.6:35b-a3b-coding-nvfp4
+    provider: ollama
+    released: "2026-04-02"
+    size_gb: 22.0
+    context_k: 256
+    exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
+
+  - id: qwen3.6:35b-a3b-coding-bf16
+    provider: ollama
+    released: "2026-04-02"
+    size_gb: 70.0
+    context_k: 256
+    exclude: "70 GB exceeds 64 GB unified memory — will OOM."
+
 # ---------------------------------------------------------------------------
-# Qwen 3.5 (Alibaba) — local via Ollama
+# Qwen 3.5 (Alibaba) — main release 2026-02-16; small models (0.8b/2b/4b) 2026-03-02
 # ---------------------------------------------------------------------------
 qwen3.5:
-  # --- Small models ---
+  # --- Small models (released 2026-03-02 as a separate small-model series) ---
   - id: qwen3.5:0.8b
     provider: ollama
+    released: "2026-03-02"
     size_gb: 1.0
     context_k: 256
     multimodal: true
@@ -325,6 +397,7 @@ qwen3.5:
 
   - id: qwen3.5:2b
     provider: ollama
+    released: "2026-03-02"
     size_gb: 2.7
     context_k: 256
     multimodal: true
@@ -332,6 +405,7 @@ qwen3.5:
 
   - id: qwen3.5:4b
     provider: ollama
+    released: "2026-03-02"
     size_gb: 3.4
     context_k: 256
     multimodal: true
@@ -339,16 +413,17 @@ qwen3.5:
 
   - id: qwen3.5:9b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 6.6
     context_k: 256
     multimodal: true
-    recommended: true
     v1: true
     notes: "Alias for 9b-q4_K_M. Smallest Qwen with real coding ability."
 
   # --- 27b family (includes coding fine-tune) ---
   - id: qwen3.5:27b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 17.0
     context_k: 256
     multimodal: true
@@ -356,6 +431,7 @@ qwen3.5:
 
   - id: qwen3.5:27b-q4_K_M
     provider: ollama
+    released: "2026-02-16"
     size_gb: 17.0
     context_k: 256
     multimodal: true
@@ -363,6 +439,7 @@ qwen3.5:
 
   - id: qwen3.5:27b-q8_0
     provider: ollama
+    released: "2026-02-16"
     size_gb: 30.0
     context_k: 256
     multimodal: true
@@ -370,26 +447,29 @@ qwen3.5:
 
   - id: qwen3.5:27b-coding-mxfp8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 31.0
     context_k: 256
     multimodal: false
-    recommended: true
     notes: "Coding-specialized fine-tune of 27b. Key comparison: does coding fine-tuning beat a larger general model?"
 
   - id: qwen3.5:27b-int4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 16.0
     context_k: 256
     notes: "INT4 quantization of 27b."
 
   - id: qwen3.5:27b-int8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 30.0
     context_k: 256
     notes: "INT8 quantization of 27b."
 
   - id: qwen3.5:27b-mlx-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 55.0
     context_k: 256
     multimodal: false
@@ -397,6 +477,7 @@ qwen3.5:
 
   - id: qwen3.5:27b-mxfp8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 31.0
     context_k: 256
     multimodal: false
@@ -404,6 +485,7 @@ qwen3.5:
 
   - id: qwen3.5:27b-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 56.0
     context_k: 256
     multimodal: true
@@ -411,12 +493,14 @@ qwen3.5:
 
   - id: qwen3.5:27b-coding-nvfp4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 20.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
 
   - id: qwen3.5:27b-coding-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 55.0
     context_k: 256
     multimodal: false
@@ -424,6 +508,7 @@ qwen3.5:
 
   - id: qwen3.5:27b-nvfp4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 20.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
@@ -431,6 +516,7 @@ qwen3.5:
   # --- 35b-a3b family (MoE, includes coding fine-tune) ---
   - id: qwen3.5:35b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 24.0
     context_k: 256
     multimodal: true
@@ -438,6 +524,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 24.0
     context_k: 256
     multimodal: true
@@ -446,6 +533,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-q4_K_M
     provider: ollama
+    released: "2026-02-16"
     size_gb: 24.0
     context_k: 256
     multimodal: true
@@ -453,6 +541,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-q8_0
     provider: ollama
+    released: "2026-02-16"
     size_gb: 39.0
     context_k: 256
     multimodal: true
@@ -460,6 +549,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-coding-mxfp8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 38.0
     context_k: 256
     multimodal: false
@@ -468,18 +558,21 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-int4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 20.0
     context_k: 256
     notes: "INT4 quantization of 35b-a3b."
 
   - id: qwen3.5:35b-a3b-int8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 38.0
     context_k: 256
     notes: "INT8 quantization of 35b-a3b."
 
   - id: qwen3.5:35b-a3b-mxfp8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 38.0
     context_k: 256
     multimodal: false
@@ -487,6 +580,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 72.0
     context_k: 256
     multimodal: true
@@ -494,6 +588,7 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-mlx-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 70.0
     context_k: 256
     multimodal: false
@@ -501,18 +596,21 @@ qwen3.5:
 
   - id: qwen3.5:35b-a3b-coding-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 70.0
     context_k: 256
     exclude: "70 GB exceeds 64 GB unified memory — will OOM."
 
   - id: qwen3.5:35b-a3b-coding-nvfp4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 22.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
 
   - id: qwen3.5:35b-a3b-nvfp4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 22.0
     context_k: 256
     exclude: "NVIDIA FP4 format — not usable on Apple Silicon."
@@ -520,6 +618,7 @@ qwen3.5:
   # --- 122b (MoE, 10B active) ---
   - id: qwen3.5:122b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 81.0
     context_k: 256
     multimodal: true
@@ -527,6 +626,7 @@ qwen3.5:
 
   - id: qwen3.5:122b-a10b
     provider: ollama
+    released: "2026-02-16"
     size_gb: 81.0
     context_k: 256
     multimodal: true
@@ -534,6 +634,7 @@ qwen3.5:
 
   - id: qwen3.5:122b-a10b-q4_K_M
     provider: ollama
+    released: "2026-02-16"
     size_gb: 81.0
     context_k: 256
     multimodal: true
@@ -541,72 +642,86 @@ qwen3.5:
 
   - id: qwen3.5:cloud
     provider: ollama
+    released: "2026-02-16"
     size_gb: null
     exclude: "Cloud redirect — no local inference, no GPU metrics."
 
   - id: qwen3.5:397b-cloud
     provider: ollama
+    released: "2026-02-16"
     size_gb: null
     exclude: "Cloud redirect — no local inference, no GPU metrics."
 
-  # --- MLX/nvfp4 small variants (not individually listed above) ---
+  # --- MLX/nvfp4 small variants ---
   - id: qwen3.5:0.8b-mlx-bf16
     provider: ollama
+    released: "2026-03-02"
     size_gb: 1.7
     context_k: 256
     notes: "MLX BF16, 0.8b."
   - id: qwen3.5:0.8b-mxfp8
     provider: ollama
+    released: "2026-03-02"
     size_gb: 1.2
     context_k: 256
     notes: "MX Float 8, 0.8b."
   - id: qwen3.5:0.8b-nvfp4
     provider: ollama
+    released: "2026-03-02"
     size_gb: 1.0
     context_k: 256
     exclude: "NVIDIA FP4 format."
   - id: qwen3.5:2b-mlx-bf16
     provider: ollama
+    released: "2026-03-02"
     size_gb: 4.4
     context_k: 256
     notes: "MLX BF16, 2b."
   - id: qwen3.5:2b-mxfp8
     provider: ollama
+    released: "2026-03-02"
     size_gb: 3.1
     context_k: 256
     notes: "MX Float 8, 2b."
   - id: qwen3.5:2b-nvfp4
     provider: ollama
+    released: "2026-03-02"
     size_gb: 2.5
     context_k: 256
     exclude: "NVIDIA FP4 format."
   - id: qwen3.5:4b-mlx-bf16
     provider: ollama
+    released: "2026-03-02"
     size_gb: 9.1
     context_k: 256
     notes: "MLX BF16, 4b."
   - id: qwen3.5:4b-mxfp8
     provider: ollama
+    released: "2026-03-02"
     size_gb: 5.6
     context_k: 256
     notes: "MX Float 8, 4b."
   - id: qwen3.5:4b-nvfp4
     provider: ollama
+    released: "2026-03-02"
     size_gb: 4.0
     context_k: 256
     exclude: "NVIDIA FP4 format."
   - id: qwen3.5:9b-mlx-bf16
     provider: ollama
+    released: "2026-02-16"
     size_gb: 19.0
     context_k: 256
     notes: "MLX BF16, 9b. Interesting runtime comparison vs qwen3.5:9b (GGUF)."
   - id: qwen3.5:9b-mxfp8
     provider: ollama
+    released: "2026-02-16"
     size_gb: 12.0
     context_k: 256
     notes: "MX Float 8, 9b."
   - id: qwen3.5:9b-nvfp4
     provider: ollama
+    released: "2026-02-16"
     size_gb: 8.9
     context_k: 256
     exclude: "NVIDIA FP4 format."
@@ -617,24 +732,103 @@ qwen3.5:
 other:
   - id: "qwen3-coder:30b"
     provider: ollama
+    released: "2025-07-31"
     size_gb: 18.0
     context_k: 32
     notes: "Qwen3 Coder 30B — coding-specialized model, strong candidate for benchmark."
 
   - id: "hf.co/Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-GGUF:Q8_0"
     provider: ollama
+    released: "2026-03-01"
     size_gb: 29.0
     context_k: 256
-    notes: "Qwen3.5 27B distilled from Claude Opus 4.6 reasoning traces. Wildcard — may punch above its weight."
+    notes: "Qwen3.5 27B distilled from Claude Opus 4.6 reasoning traces. Wildcard — may punch above its weight. Released date is approximate (community fine-tune)."
 
   - id: "deepseek-r1:8b"
     provider: ollama
+    released: "2025-01-20"
     size_gb: 5.2
     context_k: 64
     notes: "DeepSeek R1 8B — reasoning model. May overthink simple tasks."
 
   - id: "gemma3:1b"
     provider: ollama
+    released: "2025-03-12"
     size_gb: 0.8
     context_k: 32
     notes: "Gemma 3 1B — too small to produce working code; floor reference only."
+
+  # --- Qwen 3 Coder Next (coding-specialized, ~80B MoE) ---
+  - id: "qwen3-coder-next:latest"
+    provider: ollama
+    released: "2026-02-04"
+    size_gb: 52.0
+    context_k: 256
+    multimodal: false
+    recommended: true
+    notes: "Alias for qwen3-coder-next:q4_K_M. Dedicated coding model; ~80B MoE, 52 GB q4 fits with ~12 GB headroom. New contender — untested."
+
+  - id: "qwen3-coder-next:q4_K_M"
+    provider: ollama
+    released: "2026-02-04"
+    size_gb: 52.0
+    context_k: 256
+    multimodal: false
+    notes: "Identical to qwen3-coder-next:latest — use that tag instead."
+
+  - id: "qwen3-coder-next:q8_0"
+    provider: ollama
+    released: "2026-02-04"
+    size_gb: 85.0
+    context_k: 256
+    exclude: "85 GB exceeds 64 GB unified memory — will OOM."
+
+  - id: "qwen3-coder-next:cloud"
+    provider: ollama
+    released: "2026-02-04"
+    size_gb: null
+    exclude: "Cloud redirect — no local inference, no GPU metrics."
+
+  # --- GLM 4.7 Flash (Zhipu AI) — released 2026-01-19 ---
+  - id: "glm-4.7-flash:latest"
+    provider: ollama
+    released: "2026-01-19"
+    size_gb: 19.0
+    context_k: 198
+    multimodal: false
+    recommended: true
+    notes: "Alias for glm-4.7-flash:q4_K_M. Zhipu AI 30B-A3B MoE — first non-Alibaba/Google/Anthropic model in catalog. New contender — untested."
+
+  - id: "glm-4.7-flash:q4_K_M"
+    provider: ollama
+    released: "2026-01-19"
+    size_gb: 19.0
+    context_k: 198
+    multimodal: false
+    notes: "Identical to glm-4.7-flash:latest — use that tag instead."
+
+  - id: "glm-4.7-flash:q8_0"
+    provider: ollama
+    released: "2026-01-19"
+    size_gb: 32.0
+    context_k: 198
+    multimodal: false
+    notes: "Higher-precision GLM 4.7 Flash. Comfortable 32 GB."
+
+  - id: "glm-4.7-flash:bf16"
+    provider: ollama
+    released: "2026-01-19"
+    size_gb: 60.0
+    context_k: 198
+    multimodal: false
+    notes: "Full BF16. Fits in 64 GB but only ~4 GB headroom — monitor for memory pressure."
+
+  # --- Distilled reasoning model (community fine-tune on Gemma 4) ---
+  - id: "gemma-4-claude-opus-4.6-thinking-s7-multimodal:latest"
+    provider: ollama
+    released: "2026-04-01"
+    size_gb: 33.0
+    context_k: 256
+    multimodal: false
+    recommended: true
+    notes: "Gemma 4 fine-tuned on Claude Opus 4.6 thinking traces. Community model; released date is approximate. Reasoning distillation may punch above weight for code tasks. New contender — untested."
