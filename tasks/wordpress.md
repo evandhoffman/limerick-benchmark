@@ -6,7 +6,7 @@ Build a Flask web app with SQLite storage that supports CRUD operations for blog
 
 Create a Python application that:
 
-1. **Entry point**: Single `app.py` file, startable with `uv run python app.py`.
+1. **Entry point**: Flask app in `app.py`, containerized with `Dockerfile` and orchestrated via `docker-compose.yml`. The app must start with `docker compose up --build` from the workspace root.
 2. **Database**: SQLite database file named `blog.db` in the workspace directory. Schema must include at least a `posts` table with columns: `id` (integer primary key), `title` (text, required), `content` (text, required), `created_at` (timestamp), and `is_published` (boolean, default False).
 3. **Admin interface** (`/admin`): A page where users can:
    - View all posts (published and draft)
@@ -15,20 +15,21 @@ Create a Python application that:
    - Delete a post
    - Mark posts as published or draft
 4. **Public interface** (`/`): A home page displaying all published posts with title and content. Draft posts must not be visible.
-5. **Port**: Listen on port 8181.
+5. **Port**: The container must expose port 8181, mapped to the host. The app inside the container listens on port 8181.
 
 ## Pass condition
 
 The grader will:
 
-1. Start your app with `uv run python app.py`
-2. Verify HTTP 200 on `/` and `/admin`
+1. Run `docker compose up --build` from the workspace root
+2. Wait for the container to start and verify HTTP 200 on `http://localhost:8181/` and `http://localhost:8181/admin`
 3. Manually verify:
    - Admin page allows creating a post
    - Created posts appear in admin interface
    - Only published posts appear on the public home page
    - Posts can be edited and deleted from the admin interface
    - Refreshing the page persists changes (data is saved to the database)
+   - Container shuts down cleanly with `docker compose down`
 
 ## Visual Design
 
@@ -54,17 +55,23 @@ The grader will:
 - Use Flask for routing and HTML templates (Jinja2).
 - Use Python's `sqlite3` module directly for database access (no ORM required, but SQLAlchemy is fine if you prefer).
 - CSS can be inline `<style>` tags or external stylesheets — keep it minimal and focused on the two visual themes above.
-- A minimal working solution is ~150–200 lines of Python + a few Jinja2 templates.
-- Before declaring done, manually test: create a post, mark it published, refresh the public page and verify it appears with date/metadata; mark it draft and verify it disappears.
-- Dependency bootstrap: `uv` will initialize the project on first run; install Flask with your preferred method (add to `pyproject.toml` or use `uv pip install flask`).
+- **Docker setup**: Create a `Dockerfile` based on a lightweight Python image (e.g., `python:3.11-slim`). Install Flask and run `python app.py` as the entrypoint. Create a `docker-compose.yml` that builds from the Dockerfile and maps port 8181. Mount the workspace as a volume so `blog.db` persists.
+- A minimal working solution is ~150–200 lines of Python + a few Jinja2 templates + simple Dockerfile and docker-compose.yml.
+- Before declaring done, manually test: run `docker compose up --build`, create a post, mark it published, refresh the public page and verify it appears with date/metadata; mark it draft and verify it disappears. Run `docker compose down` and verify the database file persists.
 
 ## Hard rules
 
-The entry point must be `app.py`, startable with `uv run python app.py`. Do not leave a stock `main.py` alongside it.
+The application must be containerized with a `Dockerfile` and orchestrated with a `docker-compose.yml` at the workspace root.
 
-The server must listen on port 8181.
+The `docker-compose.yml` must define a single service that builds from the `Dockerfile` and exposes port 8181 to the host.
 
-The database must be SQLite, stored as `blog.db` in the workspace root (not in a subdirectory).
+The container must run Flask on port 8181 (inside the container). Port 8181 must be mapped to port 8181 on the host.
+
+The `Dockerfile` must set up a Python environment with Flask installed and run `app.py` as the entrypoint.
+
+The database must be SQLite, stored as `blog.db` in the workspace root / mounted into the container at `/workspace/blog.db` (or equivalent; ensure data persists across container restarts).
+
+The Flask app must be in `app.py` at the workspace root.
 
 No external APIs or network calls. All data is local.
 
