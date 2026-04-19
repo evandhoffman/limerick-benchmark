@@ -61,6 +61,7 @@ uv run prefetch --set recommended             # actually pull
 # Optional: focused Qwen coding comparison batch
 uv run prefetch --set qwen-coding --dry-run
 uv run benchmark run --set qwen-coding
+uv run benchmark run --set qwen-coding --rounds 5 --order balanced
 
 # 4. Smallest possible sanity run (~30s)
 uv run benchmark run --set poc
@@ -107,9 +108,11 @@ meta-analysis across 10 jobs from one day is in
 
 1. **One job per invocation.** Each `benchmark run` gets a single job ID
    (`YYYYMMDD.HHMMSS`); every per-model run is collated under it.
-   Results live in `results/<job_id>/<slug>/`, workspaces in
-   `~/.limerick-benchmark/workspaces/<job_id>/<slug>/` with a symlink
-   back. Cleanup is `rm -rf results/<job_id>` plus the matching
+   Results live in `results/<job_id>/<run-dir>/`, workspaces in
+   `~/.limerick-benchmark/workspaces/<job_id>/<run-dir>/` with a symlink
+   back. Single-run jobs still use the bare model slug; repeated-round
+   jobs prefix run index / round / position so repeated model IDs do not
+   collide. Cleanup is `rm -rf results/<job_id>` plus the matching
    workspace tree.
 2. **Serial runs, no GPU contention.** One model at a time so the numbers
    are comparable.
@@ -193,6 +196,9 @@ Nothing else. No Docker, no cloud, no sign-up.
 | `--set {poc,v1,recommended,qwen-coding,local,reference}` | — | Named model set. `qwen-coding` is the focused comparison batch: `gemma4:e4b`, `qwen3.5:35b-a3b-coding-mxfp8`, and `qwen3.6:35b-a3b-coding-mxfp8`; `local` = whatever is already in your Ollama store; `reference` = Anthropic cloud. Mutually exclusive with `--model`. |
 | `--model MODEL_ID […]` | — | One or more explicit model IDs. Unknown IDs are treated as Ollama models. |
 | `--task NAME` | `limerick` | Task file name (without `.md`) in `tasks/`. |
+| `--rounds N` | `1` | Repeat the full model list `N` times in one job. |
+| `--order {balanced,random,fixed}` | `balanced` | Per-round ordering. `balanced` rotates start position each round; `random` shuffles each round; `fixed` repeats the same order. |
+| `--seed INT` | — | Seed for reproducible `--order random` runs. |
 | `--timeout SECONDS` | 900 | Per-model hard limit. |
 | `--agent {react,aider}` | `react` | Agent backend. |
 | `--aider-stagnation-timeout SECONDS` | 300 | Abort an Aider run if the workspace tree stays unchanged this long. |

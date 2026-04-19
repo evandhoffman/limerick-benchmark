@@ -14,10 +14,12 @@ directly** — do not create per-agent variants.
 - `runner.py`: Orchestrates serial model runs. Each `run_benchmark`
   invocation gets a single job id (`YYYYMMDD.HHMMSS`, produced by
   `_new_job_id`) and every per-model run is collated under it:
-  results at `results/<job_id>/<slug>/` and workspaces at
-  `~/.limerick-benchmark/workspaces/<job_id>/<slug>/` (with a `workspace`
-  symlink back to the out-of-tree workspace). Also builds a per-run label
-  like `3/10:qwen3.5-9b:aider` that agent backends use as their log prefix.
+  results at `results/<job_id>/<run-dir>/` and workspaces at
+  `~/.limerick-benchmark/workspaces/<job_id>/<run-dir>/` (with a `workspace`
+  symlink back to the out-of-tree workspace). Single-run jobs still use the
+  bare model slug; repeated-round jobs prefix run index / round / position so
+  repeated model IDs do not collide. Also builds a per-run label like
+  `3/10:r2p1:qwen3.5-9b:aider` that agent backends use as their log prefix.
   Cleaning up old work is `rm -rf results/<job_id>` plus the corresponding
   workspace subtree.
 - `agent.py`: Hosts both agent backends.
@@ -84,6 +86,8 @@ Use `uv` for all Python workflows — never call `pip`/`python` directly.
 - `uv run benchmark run --set poc`: Smallest proof-of-concept run.
 - `uv run benchmark run --set qwen-coding`: Focused comparison batch for
   `gemma4:e4b` plus the Qwen 3.5 and 3.6 coding models.
+- `uv run benchmark run --set qwen-coding --rounds 5 --order balanced`:
+  Repeat the full batch across 5 balanced rounds in one job.
 - `uv run benchmark run --set recommended --skip-missing`: Full run, skipping
   models that aren't pulled.
 - `uv run benchmark run --set local`: Run everything currently in the local

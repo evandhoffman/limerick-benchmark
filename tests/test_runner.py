@@ -5,11 +5,14 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from benchmark.runner import (
+    RUN_ORDER_CHOICES,
     RESULTS_ROOT,
+    _build_run_plan,
     _new_job_id,
     _normalize_agent_stats_for_eval,
     _prepare_workspace,
     _run_dir,
+    _run_dir_name,
     _run_one,
     _should_evaluate,
     _slug,
@@ -122,7 +125,7 @@ class RunnerWorkspacePreparationTests(unittest.TestCase):
 
     def test_run_dir_nests_model_under_job_id(self) -> None:
         job_id = "20260417.073034"
-        run_dir = _run_dir(job_id, "gemma4:e2b")
+        run_dir = _run_dir(job_id, _run_dir_name("gemma4:e2b", run_index=1, total_runs=1, round_index=1, position_in_round=1))
         self.assertEqual(run_dir, RESULTS_ROOT / job_id / _slug("gemma4:e2b"))
         self.assertEqual(run_dir.parent.name, job_id)
         self.assertNotIn(":", run_dir.name)
@@ -133,6 +136,54 @@ class RunnerWorkspacePreparationTests(unittest.TestCase):
         self.assertEqual(len(date_part), 8)
         self.assertEqual(len(time_part), 6)
         self.assertTrue(date_part.isdigit() and time_part.isdigit())
+
+
+class RunnerPlanTests(unittest.TestCase):
+    def test_run_order_choices_cover_expected_values(self) -> None:
+        self.assertEqual(RUN_ORDER_CHOICES, ("balanced", "random", "fixed"))
+
+    def test_build_run_plan_balanced_rotates_each_round(self) -> None:
+        models = [
+            {"id": "gemma4:e4b"},
+            {"id": "qwen3.5:35b-a3b-coding-mxfp8"},
+            {"id": "qwen3.6:35b-a3b-coding-mxfp8"},
+        ]
+
+        plan = _build_run_plan(models, rounds=3, order="balanced", seed=None)
+
+        self.assertEqual(
+            [(entry["round_index"], entry["position_in_round"], entry["model"]["id"]) for entry in plan],
+            [
+                (1, 1, "gemma4:e4b"),
+                (1, 2, "qwen3.5:35b-a3b-coding-mxfp8"),
+                (1, 3, "qwen3.6:35b-a3b-coding-mxfp8"),
+                (2, 1, "qwen3.5:35b-a3b-coding-mxfp8"),
+                (2, 2, "qwen3.6:35b-a3b-coding-mxfp8"),
+                (2, 3, "gemma4:e4b"),
+                (3, 1, "qwen3.6:35b-a3b-coding-mxfp8"),
+                (3, 2, "gemma4:e4b"),
+                (3, 3, "qwen3.5:35b-a3b-coding-mxfp8"),
+            ],
+        )
+
+    def test_build_run_plan_random_is_seeded(self) -> None:
+        models = [
+            {"id": "a"},
+            {"id": "b"},
+            {"id": "c"},
+        ]
+
+        plan_a = _build_run_plan(models, rounds=2, order="random", seed=7)
+        plan_b = _build_run_plan(models, rounds=2, order="random", seed=7)
+
+        self.assertEqual(
+            [entry["model"]["id"] for entry in plan_a],
+            [entry["model"]["id"] for entry in plan_b],
+        )
+
+    def test_build_run_plan_uses_plain_slug_for_single_run(self) -> None:
+        plan = _build_run_plan([{"id": "gemma4:e4b"}], rounds=1, order="balanced", seed=None)
+        self.assertEqual(plan[0]["run_dir_name"], "gemma4_e4b")
 
 class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_benchmark_passes_aider_stagnation_timeout_to_each_run(self) -> None:
@@ -163,6 +214,9 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
             run_one_mock.await_args.kwargs["aider_stagnation_timeout"],
             420,
         )
+        self.assertEqual(run_one_mock.await_args.kwargs["round_index"], 1)
+        self.assertEqual(run_one_mock.await_args.kwargs["position_in_round"], 1)
+        self.assertEqual(run_one_mock.await_args.kwargs["total_rounds"], 1)
 
     async def test_run_benchmark_writes_job_metadata_and_generates_report(self) -> None:
         model = {"id": "gemma4:e2b", "provider": "ollama"}
@@ -189,6 +243,8 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
                     timeout=600,
                     aider_stagnation_timeout=420,
                     enable_hardware_metrics=True,
+                    rounds=3,
+                    order="balanced",
                 )
 
             job_metadata = json.loads((results_root / "20260417.083818" / "job.json").read_text())
@@ -199,6 +255,11 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job_metadata["aider_stagnation_timeout_seconds"], 420)
             self.assertTrue(job_metadata["enable_hardware_metrics"])
             self.assertEqual(job_metadata["model_ids"], ["gemma4:e2b"])
+            self.assertEqual(job_metadata["rounds"], 3)
+            self.assertEqual(job_metadata["order"], "balanced")
+            self.assertIsNone(job_metadata["seed"])
+            self.assertEqual(job_metadata["total_runs"], 3)
+            self.assertEqual(len(job_metadata["run_plan"]), 3)
             write_report_mock.assert_called_once_with(results_root / "20260417.083818")
 
 
@@ -225,6 +286,12 @@ class RunnerPortGuardTests(unittest.IsolatedAsyncioTestCase):
                         aider_stagnation_timeout=420,
                         enable_hardware_metrics=False,
                         job_id="20260417.083818",
+                        run_index=1,
+                        total_runs=1,
+                        round_index=1,
+                        position_in_round=1,
+                        total_rounds=1,
+                        run_dir_name="gemma4_e2b",
                         agent_type="react",
                         run_label="1/1:gemma4-e2b:react",
                         task_name="limerick",

@@ -8,6 +8,145 @@ from benchmark.report import generate_markdown_report, load_job_report, report_o
 
 
 class ReportGenerationTests(unittest.TestCase):
+    def test_generate_markdown_report_groups_repeated_runs_by_model(self) -> None:
+        with TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "20260419.010203"
+            job_dir.mkdir()
+            (job_dir / "job.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "20260419.010203",
+                        "task_name": "limerick",
+                        "agent_type": "aider",
+                        "model_ids": ["gemma4:e4b", "qwen3.5:35b-a3b-coding-mxfp8"],
+                        "rounds": 2,
+                        "order": "balanced",
+                        "total_runs": 4,
+                    }
+                )
+            )
+
+            self._write_model(
+                job_dir,
+                slug="01_gemma4_e4b__r01_p01",
+                summary={
+                    "model_id": "gemma4:e4b",
+                    "run_index": 1,
+                    "round_index": 1,
+                    "position_in_round": 1,
+                    "started_at": "2026-04-19T01:02:03+00:00",
+                    "wall_seconds": 18.0,
+                    "tokens_in": 1000,
+                    "tokens_out": 700,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": True,
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 300,
+                        "error": None,
+                    },
+                },
+            )
+            self._write_model(
+                job_dir,
+                slug="02_qwen3.5_35b-a3b-coding-mxfp8__r01_p02",
+                summary={
+                    "model_id": "qwen3.5:35b-a3b-coding-mxfp8",
+                    "run_index": 2,
+                    "round_index": 1,
+                    "position_in_round": 2,
+                    "started_at": "2026-04-19T01:02:23+00:00",
+                    "wall_seconds": 16.0,
+                    "tokens_in": 1000,
+                    "tokens_out": 600,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": True,
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 280,
+                        "error": None,
+                    },
+                },
+            )
+            self._write_model(
+                job_dir,
+                slug="03_qwen3.5_35b-a3b-coding-mxfp8__r02_p01",
+                summary={
+                    "model_id": "qwen3.5:35b-a3b-coding-mxfp8",
+                    "run_index": 3,
+                    "round_index": 2,
+                    "position_in_round": 1,
+                    "started_at": "2026-04-19T01:02:43+00:00",
+                    "wall_seconds": 17.0,
+                    "tokens_in": 1000,
+                    "tokens_out": 610,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": True,
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 290,
+                        "error": None,
+                    },
+                },
+            )
+            self._write_model(
+                job_dir,
+                slug="04_gemma4_e4b__r02_p02",
+                summary={
+                    "model_id": "gemma4:e4b",
+                    "run_index": 4,
+                    "round_index": 2,
+                    "position_in_round": 2,
+                    "started_at": "2026-04-19T01:03:03+00:00",
+                    "wall_seconds": 19.0,
+                    "tokens_in": 1000,
+                    "tokens_out": 710,
+                    "api_calls": None,
+                    "tool_calls": None,
+                    "finish_reason": "completed",
+                    "timed_out": False,
+                    "error": None,
+                    "passed": True,
+                    "eval": {
+                        "entry_point": "uv run python app.py",
+                        "server_started": True,
+                        "http_status": 200,
+                        "response_bytes": 310,
+                        "error": None,
+                    },
+                },
+            )
+
+            markdown = generate_markdown_report(job_dir, task_label="limerick", include_placeholders=False)
+
+        self.assertIn("**Models tested:** 2", markdown)
+        self.assertIn("**Runs executed:** 4", markdown)
+        self.assertIn("**Rounds:** 2", markdown)
+        self.assertIn("**Order:** balanced", markdown)
+        self.assertIn("| Runs | 2 |", markdown)
+        self.assertIn("| Passes | 2/2 (100%) |", markdown)
+        self.assertIn("| Run | Round | Pos | Result | Wall Time | Finish | HTTP | Eval |", markdown)
+        self.assertIn("| 1 | gemma4:e4b | 2 | 2/2 | 18.5 s | 18.0 s | 19.0 s |", markdown)
+        self.assertIn("| 2 | qwen3.5:35b-a3b-coding-mxfp8 | 2 | 2/2 | 16.5 s | 16.0 s | 17.0 s |", markdown)
+
     def test_generate_markdown_report_with_mixed_results(self) -> None:
         with TemporaryDirectory() as tmp:
             job_dir = Path(tmp) / "20260417.083818"

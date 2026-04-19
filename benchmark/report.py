@@ -7,6 +7,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -46,6 +47,7 @@ class JobReport:
     job_dir: Path
     task_label: str
     agent_label: str
+    job_metadata: dict[str, Any]
     models: list[ModelReport]
 
 
@@ -83,6 +85,7 @@ def load_job_report(
         job_dir=job_dir,
         task_label=task_label or _infer_task_label(job_dir),
         agent_label=agent_label or _infer_agent_label(job_dir),
+        job_metadata=_load_job_metadata(job_dir),
         models=models,
     )
 
@@ -96,26 +99,40 @@ def generate_markdown_report(
 ) -> str:
     """Render a Markdown report for one benchmark job."""
     report = load_job_report(job_dir, task_label=task_label, agent_label=agent_label)
+    grouped_models = _group_models(report)
     total = len(report.models)
+    unique_models = len(grouped_models)
     passed = sum(1 for model in report.models if _is_pass(model.summary))
     pass_rate = _format_percent(passed, total)
+    rounds = report.job_metadata.get("rounds")
+    order = report.job_metadata.get("order")
+    repeated_job = any(len(runs) > 1 for _, runs in grouped_models)
 
     lines: list[str] = [
         f"# Benchmark Results - Job `{report.job_id}`",
         "",
         f"**Task:** {report.task_label}",
         f"**Agent:** {report.agent_label}",
-        f"**Models tested:** {total}",
+        f"**Models tested:** {unique_models}",
+        f"**Runs executed:** {total}",
         f"**Pass rate:** {passed}/{total} ({pass_rate})",
-        f"**Results dir:** `results/{report.job_id}/`",
-        "",
-        "_Generated from structured run artifacts. Fill in qualitative commentary manually._",
-        "",
-        "---",
-        "",
-        "## Overview",
-        "",
     ]
+    if rounds is not None:
+        lines.append(f"**Rounds:** {rounds}")
+    if order:
+        lines.append(f"**Order:** {order}")
+    lines.extend(
+        [
+            f"**Results dir:** `results/{report.job_id}/`",
+            "",
+            "_Generated from structured run artifacts. Fill in qualitative commentary manually._",
+            "",
+            "---",
+            "",
+            "## Overview",
+            "",
+        ]
+    )
     lines.extend(_render_overview(report.models))
     lines.extend(
         [
@@ -126,26 +143,44 @@ def generate_markdown_report(
         ]
     )
 
-    for index, model in enumerate(report.models, start=1):
-        lines.extend(_render_model_section(index, model, include_placeholders))
+    if repeated_job:
+        for index, (model_id, runs) in enumerate(grouped_models, start=1):
+            lines.extend(_render_group_section(index, model_id, runs, include_placeholders))
+    else:
+        for index, model in enumerate(report.models, start=1):
+            lines.extend(_render_model_section(index, model, include_placeholders))
 
-    lines.extend(
-        [
-            "## Summary Table",
-            "",
-            "| # | Model | Pass | Wall Time | Finish | HTTP | Eval |",
-            "|---|---|---|---|---|---|---|",
-        ]
-    )
-    for index, model in enumerate(report.models, start=1):
-        summary = model.summary
-        eval_result = summary.get("eval", {})
-        lines.append(
-            "| "
-            f"{index} | {summary['model_id']} | {_pass_label(summary)} | {_format_seconds(summary.get('wall_seconds'))} | "
-            f"{summary.get('finish_reason') or '-'} | {eval_result.get('http_status') or '-'} | "
-            f"{eval_result.get('error') or '-'} |"
+    lines.extend(["## Summary Table", ""])
+    if repeated_job:
+        lines.extend(
+            [
+                "| # | Model | Runs | Passes | Median | Fastest | Slowest |",
+                "|---|---|---|---|---|---|---|",
+            ]
         )
+        for index, (model_id, runs) in enumerate(grouped_models, start=1):
+            lines.append(
+                "| "
+                f"{index} | {model_id} | {len(runs)} | {_count_passes(runs)}/{len(runs)} | "
+                f"{_format_seconds(_median_wall_time(runs))} | {_format_seconds(_fastest_pass_time(runs))} | "
+                f"{_format_seconds(_slowest_pass_time(runs))} |"
+            )
+    else:
+        lines.extend(
+            [
+                "| # | Model | Pass | Wall Time | Finish | HTTP | Eval |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for index, model in enumerate(report.models, start=1):
+            summary = model.summary
+            eval_result = summary.get("eval", {})
+            lines.append(
+                "| "
+                f"{index} | {summary['model_id']} | {_pass_label(summary)} | {_format_seconds(summary.get('wall_seconds'))} | "
+                f"{summary.get('finish_reason') or '-'} | {eval_result.get('http_status') or '-'} | "
+                f"{eval_result.get('error') or '-'} |"
+            )
 
     finish_reasons = Counter((model.summary.get("finish_reason") or "unknown") for model in report.models)
     eval_errors = Counter(
@@ -217,16 +252,18 @@ def _render_overview(models: list[ModelReport]) -> list[str]:
     passes = [m for m in models if _is_pass(m.summary)]
     fails = [m for m in models if not _is_pass(m.summary)]
     pass_rate = _format_percent(len(passes), total)
+    unique_models = len({m.model_id for m in models})
+    subject = "runs" if unique_models != total else "models"
 
     lines: list[str] = []
 
     if len(passes) == total:
-        headline = f"All {total} models produced a working app (pass rate {pass_rate})."
+        headline = f"All {total} {subject} produced a working app (pass rate {pass_rate})."
     elif not passes:
-        headline = f"None of the {total} models produced a working app."
+        headline = f"None of the {total} {subject} produced a working app."
     else:
         headline = (
-            f"{len(passes)} of {total} models produced a working app "
+            f"{len(passes)} of {total} {subject} produced a working app "
             f"(pass rate {pass_rate})."
         )
     lines.extend([headline, ""])
@@ -399,6 +436,73 @@ def _render_model_section(
     return lines
 
 
+def _render_group_section(
+    index: int,
+    model_id: str,
+    runs: list[ModelReport],
+    include_placeholders: bool,
+) -> list[str]:
+    pass_count = _count_passes(runs)
+    total_runs = len(runs)
+    finish_reasons = Counter((run.summary.get("finish_reason") or "unknown") for run in runs)
+    eval_errors = Counter((run.summary.get("eval", {}).get("error") or "none") for run in runs)
+
+    rows: list[tuple[str, str]] = [
+        ("Runs", str(total_runs)),
+        ("Passes", f"{pass_count}/{total_runs} ({_format_percent(pass_count, total_runs)})"),
+        ("Median wall time", _format_seconds(_median_wall_time(runs))),
+        ("Fastest pass", _format_seconds(_fastest_pass_time(runs))),
+        ("Slowest pass", _format_seconds(_slowest_pass_time(runs))),
+        ("Finish reasons", _format_counter_summary(finish_reasons)),
+        ("Evaluator outcomes", _format_counter_summary(eval_errors)),
+    ]
+
+    sample_counts = [run.metrics.sample_count for run in runs if run.metrics is not None]
+    if sample_counts:
+        rows.append(("Median metric samples", _format_median_int(sample_counts)))
+
+    memory_peaks = [
+        run.metrics.max_memory_percent
+        for run in runs
+        if run.metrics is not None and run.metrics.max_memory_percent is not None
+    ]
+    if memory_peaks:
+        rows.append(("Median max memory", _format_metric_percent(_median(memory_peaks))))
+
+    lines = [
+        f"### {index}. {model_id}",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+    ]
+    for label, value in rows:
+        lines.append(f"| {label} | {value} |")
+
+    lines.extend(
+        [
+            "",
+            "| Run | Round | Pos | Result | Wall Time | Finish | HTTP | Eval |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for run in runs:
+        summary = run.summary
+        eval_result = summary.get("eval", {})
+        lines.append(
+            "| "
+            f"{summary.get('run_index') or '-'} | {summary.get('round_index') or '-'} | "
+            f"{summary.get('position_in_round') or '-'} | {_pass_label(summary)} | "
+            f"{_format_seconds(summary.get('wall_seconds'))} | {summary.get('finish_reason') or '-'} | "
+            f"{eval_result.get('http_status') or '-'} | {eval_result.get('error') or '-'} |"
+        )
+
+    if include_placeholders:
+        lines.extend(["", "**Commentary:** _Add manual notes here._"])
+
+    lines.append("")
+    return lines
+
+
 def _load_metric_summary(metrics_path: Path) -> MetricSummary | None:
     if not metrics_path.exists():
         return None
@@ -452,6 +556,34 @@ def _model_sort_key(model: ModelReport) -> tuple[int, int, float, str]:
         0 if finish_reason == "completed" else 1,
         float(wall_seconds),
         model.model_id,
+    )
+
+
+def _group_models(report: JobReport) -> list[tuple[str, list[ModelReport]]]:
+    grouped: dict[str, list[ModelReport]] = {}
+    for model in report.models:
+        grouped.setdefault(model.model_id, []).append(model)
+
+    for runs in grouped.values():
+        runs.sort(key=_run_sort_key)
+
+    ordered_ids: list[str] = []
+    for model_id in report.job_metadata.get("model_ids", []):
+        if model_id in grouped and model_id not in ordered_ids:
+            ordered_ids.append(model_id)
+    for model_id in sorted(grouped):
+        if model_id not in ordered_ids:
+            ordered_ids.append(model_id)
+    return [(model_id, grouped[model_id]) for model_id in ordered_ids]
+
+
+def _run_sort_key(model: ModelReport) -> tuple[int, int, int, str]:
+    summary = model.summary
+    return (
+        int(summary.get("round_index") or 0),
+        int(summary.get("position_in_round") or 0),
+        int(summary.get("run_index") or 0),
+        str(summary.get("started_at") or ""),
     )
 
 
@@ -533,6 +665,59 @@ def _format_counter(value: Any) -> str:
     if value is None:
         return "n/a"
     return str(value)
+
+
+def _format_counter_summary(counter: Counter) -> str:
+    if not counter:
+        return "-"
+    return ", ".join(f"`{label}` x{count}" for label, count in sorted(counter.items()))
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(median(values))
+
+
+def _median_wall_time(runs: list[ModelReport]) -> float | None:
+    values = [
+        float(run.summary["wall_seconds"])
+        for run in runs
+        if isinstance(run.summary.get("wall_seconds"), (int, float))
+    ]
+    return _median(values)
+
+
+def _fastest_pass_time(runs: list[ModelReport]) -> float | None:
+    values = [
+        float(run.summary["wall_seconds"])
+        for run in runs
+        if _is_pass(run.summary) and isinstance(run.summary.get("wall_seconds"), (int, float))
+    ]
+    if not values:
+        return None
+    return min(values)
+
+
+def _slowest_pass_time(runs: list[ModelReport]) -> float | None:
+    values = [
+        float(run.summary["wall_seconds"])
+        for run in runs
+        if _is_pass(run.summary) and isinstance(run.summary.get("wall_seconds"), (int, float))
+    ]
+    if not values:
+        return None
+    return max(values)
+
+
+def _count_passes(runs: list[ModelReport]) -> int:
+    return sum(1 for run in runs if _is_pass(run.summary))
+
+
+def _format_median_int(values: list[int]) -> str:
+    if not values:
+        return "-"
+    return str(int(round(float(median(values)))))
 
 
 def _code_or_dash(value: Any) -> str:

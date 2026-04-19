@@ -7,6 +7,7 @@ Usage:
     uv run python -m benchmark run --model gemma4:e2b
     uv run python -m benchmark run --set poc --timeout 300
     uv run python -m benchmark run --set qwen-coding
+    uv run python -m benchmark run --set qwen-coding --rounds 5 --order balanced
     uv run python -m benchmark run --set poc --agent aider --aider-stagnation-timeout 420
     uv run python -m benchmark report --job-id 20260417.083818
 """
@@ -25,7 +26,7 @@ from .agent import AIDER_STAGNATION_SECONDS, TIMEOUT_SECONDS
 from .model_sets import BENCHMARK_SET_CHOICES, NAMED_MODEL_SETS, format_set_metavar
 from .ollama_utils import get_local_models, get_pulled_names
 from .report import generate_markdown_report, resolve_job_dir
-from .runner import run_benchmark
+from .runner import RUN_ORDER_CHOICES, run_benchmark
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +40,13 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 MODELS_YAML = Path(__file__).parent.parent / "models.yaml"
+
+
+def _positive_int(raw_value: str) -> int:
+    value = int(raw_value)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
 
 
 def load_catalog() -> dict:
@@ -207,6 +215,23 @@ def main() -> None:
     )
     run_p.add_argument("--task", default="limerick", help="Task name (default: limerick)")
     run_p.add_argument(
+        "--rounds",
+        type=_positive_int,
+        default=1,
+        help="How many full rounds to run over the selected model list (default: 1)",
+    )
+    run_p.add_argument(
+        "--order",
+        choices=list(RUN_ORDER_CHOICES),
+        default="balanced",
+        help="Per-round model ordering strategy (default: balanced)",
+    )
+    run_p.add_argument(
+        "--seed",
+        type=int,
+        help="Seed for --order random",
+    )
+    run_p.add_argument(
         "--timeout",
         type=int,
         default=TIMEOUT_SECONDS,
@@ -333,6 +358,9 @@ def main() -> None:
             aider_stagnation_timeout=args.aider_stagnation_timeout,
             enable_hardware_metrics=args.enable_hardware_metrics,
             agent_type=args.agent,
+            rounds=args.rounds,
+            order=args.order,
+            seed=args.seed,
         )
     )
 

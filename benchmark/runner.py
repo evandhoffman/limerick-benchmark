@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 import re
 import subprocess
 import time
@@ -24,6 +25,7 @@ TASKS_DIR = Path(__file__).parent.parent / "tasks"
 # Workspaces live OUTSIDE the repo so `uv init` inside them can't walk up
 # and auto-register as a workspace member in our root pyproject.toml.
 WORKSPACE_BASE = Path.home() / ".limerick-benchmark" / "workspaces"
+RUN_ORDER_CHOICES = ("balanced", "random", "fixed")
 
 
 def _slug(model_id: str) -> str:
@@ -36,9 +38,99 @@ def _new_job_id() -> str:
     return datetime.now().strftime("%Y%m%d.%H%M%S")
 
 
-def _run_dir(job_id: str, model_id: str) -> Path:
-    """Per-model results directory under the job's collation dir."""
-    return RESULTS_ROOT / job_id / _slug(model_id)
+def _run_dir(job_id: str, run_dir_name: str) -> Path:
+    """Per-run results directory under the job's collation dir."""
+    return RESULTS_ROOT / job_id / run_dir_name
+
+
+def _run_dir_name(
+    model_id: str,
+    *,
+    run_index: int,
+    total_runs: int,
+    round_index: int,
+    position_in_round: int,
+) -> str:
+    """Build a stable per-run directory name.
+
+    Single-run jobs keep the historical layout of `results/<job>/<model-slug>/`.
+    Repeated jobs prefix each run with stable indices so repeated model IDs do not
+    collide on disk and sort in execution order.
+    """
+    model_slug = _slug(model_id)
+    if total_runs == 1:
+        return model_slug
+    return (
+        f"{run_index:02d}_{model_slug}"
+        f"__r{round_index:02d}_p{position_in_round:02d}"
+    )
+
+
+def _ordered_models_for_round(
+    models: list[dict[str, Any]],
+    *,
+    round_index: int,
+    order: str,
+    rng: random.Random | None,
+) -> list[dict[str, Any]]:
+    """Return the execution order for one round."""
+    if order == "fixed" or len(models) <= 1:
+        return list(models)
+    if order == "balanced":
+        offset = (round_index - 1) % len(models)
+        return list(models[offset:] + models[:offset])
+    if order == "random":
+        shuffled = list(models)
+        assert rng is not None
+        rng.shuffle(shuffled)
+        return shuffled
+    raise ValueError(f"Unknown run order: {order}")
+
+
+def _build_run_plan(
+    models: list[dict[str, Any]],
+    *,
+    rounds: int,
+    order: str,
+    seed: int | None,
+) -> list[dict[str, Any]]:
+    """Expand a unique model list into concrete per-run schedule entries."""
+    if rounds < 1:
+        raise ValueError("rounds must be at least 1")
+    if order not in RUN_ORDER_CHOICES:
+        raise ValueError(f"Unknown run order: {order}")
+
+    rng = random.Random(seed) if order == "random" else None
+    plan: list[dict[str, Any]] = []
+    total_runs = len(models) * rounds
+    run_index = 0
+
+    for round_index in range(1, rounds + 1):
+        round_models = _ordered_models_for_round(
+            models,
+            round_index=round_index,
+            order=order,
+            rng=rng,
+        )
+        for position_in_round, model in enumerate(round_models, start=1):
+            run_index += 1
+            plan.append(
+                {
+                    "model": model,
+                    "run_index": run_index,
+                    "total_runs": total_runs,
+                    "round_index": round_index,
+                    "position_in_round": position_in_round,
+                    "run_dir_name": _run_dir_name(
+                        model["id"],
+                        run_index=run_index,
+                        total_runs=total_runs,
+                        round_index=round_index,
+                        position_in_round=position_in_round,
+                    ),
+                }
+            )
+    return plan
 
 
 def _load_task(task_name: str) -> str:
@@ -205,6 +297,12 @@ async def _run_one(
     aider_stagnation_timeout: int,
     enable_hardware_metrics: bool,
     job_id: str,
+    run_index: int,
+    total_runs: int,
+    round_index: int,
+    position_in_round: int,
+    total_rounds: int,
+    run_dir_name: str,
     agent_type: str = "react",
     run_label: str = "aider",
     task_name: str | None = None,
@@ -215,13 +313,13 @@ async def _run_one(
 
     assert_port_available(PORT, f"starting run for {model_id}")
 
-    run_dir = _run_dir(job_id, model_id)
+    run_dir = _run_dir(job_id, run_dir_name)
     run_dir.mkdir(parents=True)
 
     # Workspace is outside the repo to prevent uv from treating our
     # pyproject.toml as a parent workspace when the model runs `uv init`.
     # Nested under the job id so per-job cleanup is one `rm -rf`.
-    workspace = WORKSPACE_BASE / job_id / _slug(model_id)
+    workspace = WORKSPACE_BASE / job_id / run_dir_name
     workspace.mkdir(parents=True)
     _prepare_workspace(workspace, task_name=task_name, agent_type=agent_type)
 
@@ -300,6 +398,11 @@ async def _run_one(
         "provider": provider,
         "run_dir": str(run_dir),
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "run_index": run_index,
+        "total_runs": total_runs,
+        "round_index": round_index,
+        "position_in_round": position_in_round,
+        "total_rounds": total_rounds,
         "wall_seconds": wall_elapsed,
         "timeout_seconds": timeout,
         "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
@@ -348,10 +451,14 @@ async def run_benchmark(
     aider_stagnation_timeout: int = AIDER_STAGNATION_SECONDS,
     enable_hardware_metrics: bool = False,
     agent_type: str = "react",
+    rounds: int = 1,
+    order: str = "balanced",
+    seed: int | None = None,
 ) -> list[dict[str, Any]]:
     """Run all models serially. Returns list of summary dicts."""
     task_prompt = _load_task(task_name)
     RESULTS_ROOT.mkdir(exist_ok=True)
+    run_plan = _build_run_plan(models, rounds=rounds, order=order, seed=seed)
 
     job_id = _new_job_id()
     job_dir = RESULTS_ROOT / job_id
@@ -366,15 +473,33 @@ async def run_benchmark(
                 "aider_stagnation_timeout_seconds": aider_stagnation_timeout,
                 "enable_hardware_metrics": enable_hardware_metrics,
                 "model_ids": [model["id"] for model in models],
+                "rounds": rounds,
+                "order": order,
+                "seed": seed,
+                "total_runs": len(run_plan),
+                "run_plan": [
+                    {
+                        "run_index": entry["run_index"],
+                        "round_index": entry["round_index"],
+                        "position_in_round": entry["position_in_round"],
+                        "model_id": entry["model"]["id"],
+                        "run_dir_name": entry["run_dir_name"],
+                    }
+                    for entry in run_plan
+                ],
             },
             indent=2,
         )
     )
 
     logger.info(
-        "Starting benchmark job %s: %d model(s), task=%s, timeout=%ds, aider_stagnation_timeout=%ds, hardware_metrics=%s, agent=%s",
+        "Starting benchmark job %s: %d model(s), %d round(s), %d total run(s), order=%s, seed=%s, task=%s, timeout=%ds, aider_stagnation_timeout=%ds, hardware_metrics=%s, agent=%s",
         job_id,
         len(models),
+        rounds,
+        len(run_plan),
+        order,
+        seed,
         task_name,
         timeout,
         aider_stagnation_timeout,
@@ -384,11 +509,21 @@ async def run_benchmark(
     logger.info("Job dir: %s", job_dir)
 
     summaries = []
-    total = len(models)
-    for i, model in enumerate(models, 1):
-        logger.info("Run %d/%d: %s", i, total, model["id"])
+    total = len(run_plan)
+    for entry in run_plan:
+        model = entry["model"]
+        logger.info(
+            "Run %d/%d: round %d/%d pos %d/%d %s",
+            entry["run_index"],
+            total,
+            entry["round_index"],
+            rounds,
+            entry["position_in_round"],
+            len(models),
+            model["id"],
+        )
         slug = model["id"].replace(":", "-")
-        run_label = f"{i}/{total}:{slug}:{agent_type}"
+        run_label = f"{entry['run_index']}/{total}:r{entry['round_index']}p{entry['position_in_round']}:{slug}:{agent_type}"
         summary = await _run_one(
             model,
             task_prompt,
@@ -396,6 +531,12 @@ async def run_benchmark(
             aider_stagnation_timeout=aider_stagnation_timeout,
             enable_hardware_metrics=enable_hardware_metrics,
             job_id=job_id,
+            run_index=entry["run_index"],
+            total_runs=total,
+            round_index=entry["round_index"],
+            position_in_round=entry["position_in_round"],
+            total_rounds=rounds,
+            run_dir_name=entry["run_dir_name"],
             agent_type=agent_type,
             run_label=run_label,
             task_name=task_name,
@@ -404,8 +545,15 @@ async def run_benchmark(
         result = "PASS" if summary.get("passed") else "FAIL"
         detail = "" if summary.get("passed") else f" ({summary.get('failure_category') or 'unknown'})"
         logger.info(
-            "Run %d/%d done: %s — %s%s in %.1fs",
-            i, total, model["id"], result, detail, summary.get("wall_seconds", 0.0),
+            "Run %d/%d done: round %d pos %d %s — %s%s in %.1fs",
+            entry["run_index"],
+            total,
+            entry["round_index"],
+            entry["position_in_round"],
+            model["id"],
+            result,
+            detail,
+            summary.get("wall_seconds", 0.0),
         )
 
     report_path = write_markdown_report(job_dir)
