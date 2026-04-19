@@ -11,6 +11,7 @@ from benchmark.runner import (
     _build_run_plan,
     _collect_trace_signals,
     _collect_workspace_artifact_signals,
+    _format_elapsed,
     _first_meaningful_edit_seconds,
     _new_job_id,
     _normalize_agent_stats_for_eval,
@@ -192,6 +193,11 @@ class RunnerPlanTests(unittest.TestCase):
 
 
 class RunnerTimingTests(unittest.TestCase):
+    def test_format_elapsed_compacts_seconds_minutes_and_hours(self) -> None:
+        self.assertEqual(_format_elapsed(21.3), "21s")
+        self.assertEqual(_format_elapsed(329.0), "5m 29s")
+        self.assertEqual(_format_elapsed(3723.0), "1h 2m 3s")
+
     def test_first_meaningful_edit_ignores_cache_directories(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
@@ -347,6 +353,47 @@ class RunnerPropagationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job_metadata["total_runs"], 3)
             self.assertEqual(len(job_metadata["run_plan"]), 3)
             write_report_mock.assert_called_once_with(results_root / "20260417.083818")
+
+    async def test_run_benchmark_logs_elapsed_time_in_each_run_completion_message(self) -> None:
+        model = {"id": "gemma4:e2b", "provider": "ollama"}
+        with TemporaryDirectory() as tmp:
+            results_root = Path(tmp) / "results"
+            report_path = Path(tmp) / "reports" / "results_20260417.083818.md"
+            with (
+                mock.patch("benchmark.runner.RESULTS_ROOT", results_root),
+                mock.patch("benchmark.runner._load_task", return_value="Build the app"),
+                mock.patch("benchmark.runner._new_job_id", return_value="20260417.083818"),
+                mock.patch(
+                    "benchmark.runner._run_one",
+                    new=mock.AsyncMock(
+                        return_value={
+                            "model_id": model["id"],
+                            "passed": True,
+                            "wall_seconds": 21.3,
+                        }
+                    ),
+                ),
+                mock.patch(
+                    "benchmark.runner.write_markdown_report",
+                    return_value=report_path,
+                ),
+                mock.patch("benchmark.runner.time.monotonic", side_effect=[0.0, 329.0]),
+                mock.patch("benchmark.runner.logger.info") as logger_info_mock,
+            ):
+                await run_benchmark([model], task_name="limerick")
+
+        logger_info_mock.assert_any_call(
+            "Run %d/%d done: round %d pos %d %s — %s%s in %.1fs (elapsed %s)",
+            1,
+            1,
+            1,
+            1,
+            "gemma4:e2b",
+            "PASS",
+            "",
+            21.3,
+            "5m 29s",
+        )
 
 
 class RunnerPortGuardTests(unittest.IsolatedAsyncioTestCase):

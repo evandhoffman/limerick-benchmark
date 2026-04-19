@@ -99,6 +99,17 @@ def _round_seconds(value: float | None) -> float | None:
     return round(value, 1)
 
 
+def _format_elapsed(elapsed_seconds: float) -> str:
+    total_seconds = max(0, int(round(elapsed_seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 def _first_meaningful_edit_seconds(workspace: Path, started_epoch_ns: int) -> float | None:
     """Return elapsed seconds until the first non-cache workspace file edit."""
     first_edit_ns: int | None = None
@@ -715,6 +726,7 @@ async def run_benchmark(
     task_prompt = _load_task(task_name)
     RESULTS_ROOT.mkdir(exist_ok=True)
     run_plan = _build_run_plan(models, rounds=rounds, order=order, seed=seed)
+    job_started_monotonic = time.monotonic()
 
     job_id = _new_job_id()
     job_dir = RESULTS_ROOT / job_id
@@ -800,8 +812,9 @@ async def run_benchmark(
         summaries.append(summary)
         result = "PASS" if summary.get("passed") else "FAIL"
         detail = "" if summary.get("passed") else f" ({summary.get('failure_category') or 'unknown'})"
+        job_elapsed = _format_elapsed(time.monotonic() - job_started_monotonic)
         logger.info(
-            "Run %d/%d done: round %d pos %d %s — %s%s in %.1fs",
+            "Run %d/%d done: round %d pos %d %s — %s%s in %.1fs (elapsed %s)",
             entry["run_index"],
             total,
             entry["round_index"],
@@ -810,6 +823,7 @@ async def run_benchmark(
             result,
             detail,
             summary.get("wall_seconds", 0.0),
+            job_elapsed,
         )
 
     report_path = write_markdown_report(job_dir)
